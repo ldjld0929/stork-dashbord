@@ -74,8 +74,8 @@ def fetch_dynamic_themes():
                 if name_td:
                     a_tag = name_td.select_one('a')
                     if a_tag:
-                        s_name = a_tag.text.strip()
-                        # 오류 방지: 반드시 6자리 숫자만 추출하도록 [:6] 추가
+                        # 코스닥 별표(*) 등 불순물 완벽 제거
+                        s_name = a_tag.text.replace("*", "").strip()
                         s_code = a_tag['href'].split('code=')[-1][:6] 
                         stocks.append(s_name)
                         dynamic_stock_map[s_name] = s_code
@@ -95,37 +95,43 @@ theme_data, STOCK_MAP = fetch_dynamic_themes()
 def fetch_hts_api_prices(stock_map):
     if not stock_map: return {}
     codes = list(stock_map.values())
-    query_string = ",".join([f"SERVICE_ITEM:{c}" for c in codes])
-    url = f"https://polling.finance.naver.com/api/realtime?query={query_string}"
     prices = {}
-    try:
-        res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3).json()
+    
+    # 버그 수정: 네이버 API가 허용하는 갯수만큼 안전하게 20개 단위로 쪼개서(Chunking) 올바른 양식으로 요청
+    chunk_size = 20
+    for i in range(0, len(codes), chunk_size):
+        chunk = codes[i:i+chunk_size]
+        # 진짜 올바른 쿼리 양식: SERVICE_ITEM:005930,036540,149950
+        codes_str = ",".join(chunk)
+        url = f"https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:{codes_str}"
         
-        # --- 버그 수정: 코스피, 코스닥 모든 구역(areas)을 통합해서 검색 ---
-        areas = res.get("result", {}).get("areas", [])
-        for area in areas:
-            items = area.get("datas", [])
-            for item in items:
-                code = item.get("cd")
-                name = [k for k, v in stock_map.items() if v == code]
-                if name:
-                    name = name[0]
-                    close = item.get("nv", 0)
-                    chg_type = item.get("rf")
-                    rate = item.get("cr", 0.0)
-                    cv = item.get("cv", 0)
-                    aq = item.get("aq", 0)
-                    if close > 0:
-                        prices[name] = {
-                            "price": f"{close:,}", 
-                            "rate": f"{'+' if chg_type in ['1','2'] else '-' if chg_type in ['5'] else ''}{rate:.2f}%",
-                            "type": chg_type, 
-                            "diff": f"{cv:,}", 
-                            "volume": f"{int(aq * close / 100000000):,}억" if aq else "0억"
-                        }
-        return prices
-    except: 
-        return {} 
+        try:
+            res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3).json()
+            areas = res.get("result", {}).get("areas", [])
+            for area in areas:
+                items = area.get("datas", [])
+                for item in items:
+                    code = item.get("cd")
+                    name = [k for k, v in stock_map.items() if v == code]
+                    if name:
+                        name = name[0]
+                        close = item.get("nv", 0)
+                        chg_type = item.get("rf")
+                        rate = item.get("cr", 0.0)
+                        cv = item.get("cv", 0)
+                        aq = item.get("aq", 0)
+                        if close > 0:
+                            prices[name] = {
+                                "price": f"{close:,}", 
+                                "rate": f"{'+' if chg_type in ['1','2'] else '-' if chg_type in ['5'] else ''}{rate:.2f}%",
+                                "type": chg_type, 
+                                "diff": f"{cv:,}", 
+                                "volume": f"{int(aq * close / 100000000):,}억" if aq else "0억"
+                            }
+        except: 
+            pass
+            
+    return prices
 
 realtime_data = fetch_hts_api_prices(STOCK_MAP)
 
