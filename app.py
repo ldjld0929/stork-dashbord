@@ -29,10 +29,8 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# 5초 자동 새로고침
 st_autorefresh(interval=5000, key="hts_refresh")
 
-# 네이버 차단을 막기 위한 강력한 헤더
 headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
     'Accept-Language': 'ko-KR,ko;q=0.9'
@@ -68,13 +66,11 @@ def fetch_dynamic_themes():
     except Exception: 
         return {}, {}
 
-
-# [핵심 수정 1] 한자(議) 깨짐 완벽 방지: Raw Bytes 강제 디코딩
-def get_single_mcap(name_code):
+# 서버 캐시를 강제로 비우기 위해 함수 이름을 _v2로 변경했습니다.
+def get_single_mcap_v2(name_code):
     name, code = name_code
     
     try:
-        # [1단계] 모바일 JSON API 시도
         url = f"https://m.stock.naver.com/api/stock/{code}/basic"
         res = requests.get(url, headers=headers, timeout=3)
         if res.status_code == 200:
@@ -89,11 +85,8 @@ def get_single_mcap(name_code):
         pass
 
     try:
-        # [2단계] PC 웹 우회 (서버 인코딩 문제 원천 차단)
         pc_url = f"https://finance.naver.com/item/main.naver?code={code}"
         res_pc = requests.get(pc_url, headers=headers, timeout=3)
-        
-        # 여기서 requests가 맘대로 해석하지 못하게 바이트(content)를 강제로 euc-kr로 변환!
         html_text = res_pc.content.decode('euc-kr', 'replace')
         soup = BeautifulSoup(html_text, 'html.parser')
         
@@ -108,15 +101,16 @@ def get_single_mcap(name_code):
         
     return name, "-"
 
+# 이름 변경으로 스트림릿이 무조건 새로운 데이터를 불러옵니다.
 @st.cache_data(ttl=3600)
-def fetch_market_caps(stock_map):
+def fetch_market_caps_v2(stock_map):
     with ThreadPoolExecutor(max_workers=5) as executor:
-        results = list(executor.map(get_single_mcap, stock_map.items()))
+        results = list(executor.map(get_single_mcap_v2, stock_map.items()))
     return dict(results)
 
-# [핵심 수정 2] 거래대금(Volume) 정확도 100% 반영
+# 거래대금 함수도 찌꺼기를 날리기 위해 _v2로 변경했습니다.
 @st.cache_data(ttl=5)
-def fetch_prices(stock_map):
+def fetch_prices_v2(stock_map):
     prices = {}
     codes = list(stock_map.values())
     for i in range(0, len(codes), 20):
@@ -129,13 +123,14 @@ def fetch_prices(stock_map):
                     if matched_names:
                         name = matched_names[0]
                         
-                        # aa = 실제 누적 거래대금 (백만원 단위)
-                        # HTS와 100% 동일하게 가져오기 위해 100으로 나누어 '억' 단위로 맞춤
                         aa_val = item.get("aa")
-                        if aa_val is not None:
-                            vol_eok = int(aa_val) // 100
-                        else:
-                            # 만약의 경우를 대비한 백업 계산식
+                        try:
+                            if aa_val is not None:
+                                clean_aa = str(aa_val).replace(',', '').split('.')[0]
+                                vol_eok = int(clean_aa) // 100
+                            else:
+                                vol_eok = int(item.get("aq", 0) * item.get("nv", 0) / 100000000)
+                        except Exception:
                             vol_eok = int(item.get("aq", 0) * item.get("nv", 0) / 100000000)
                             
                         prices[name] = {
@@ -170,10 +165,10 @@ if "stock" in st.query_params:
     del st.query_params["stock"]
     st.rerun()
 
-# 3. 데이터 로드 및 로직 실행
+# 3. 데이터 로드 및 로직 실행 (새로운 v2 함수 호출)
 theme_data, STOCK_MAP = fetch_dynamic_themes()
-MCAP_DATA = fetch_market_caps(STOCK_MAP)
-realtime_data = fetch_prices(STOCK_MAP)
+MCAP_DATA = fetch_market_caps_v2(STOCK_MAP)
+realtime_data = fetch_prices_v2(STOCK_MAP)
 
 all_stocks_data, processed_themes = [], {}
 
