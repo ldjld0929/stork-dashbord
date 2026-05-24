@@ -38,10 +38,8 @@ body, .stApp, [data-testid="stAppViewContainer"], .main { background-color: #0f1
 </style>
 """, unsafe_allow_html=True) 
 
-# 5초마다 화면 전체 자동 새로고침
 st_autorefresh(interval=5000, key="hts_refresh") 
 
-# --- 핵심 기능 1: 네이버 실시간 테마 웹 스크래핑 (10분 캐싱) ---
 @st.cache_data(ttl=600)
 def fetch_dynamic_themes():
     url = "https://finance.naver.com/sise/theme.naver"
@@ -55,7 +53,6 @@ def fetch_dynamic_themes():
         soup = BeautifulSoup(res.text, 'html.parser')
 
         themes = []
-        # 상위 8개 테마 링크 추출
         for tr in soup.select('table.type_1 tr'):
             tds = tr.select('td')
             if len(tds) >= 2:
@@ -66,7 +63,6 @@ def fetch_dynamic_themes():
                 themes.append({'name': theme_name, 'link': theme_link})
                 if len(themes) >= 8: break 
 
-        # 각 테마별 상세 페이지로 들어가서 주도주 4개씩 추출
         for t in themes:
             res_t = requests.get(t['link'], headers=headers, timeout=5)
             res_t.encoding = 'euc-kr'
@@ -79,7 +75,8 @@ def fetch_dynamic_themes():
                     a_tag = name_td.select_one('a')
                     if a_tag:
                         s_name = a_tag.text.strip()
-                        s_code = a_tag['href'].split('code=')[-1]
+                        # 오류 방지: 반드시 6자리 숫자만 추출하도록 [:6] 추가
+                        s_code = a_tag['href'].split('code=')[-1][:6] 
                         stocks.append(s_name)
                         dynamic_stock_map[s_name] = s_code
                 if len(stocks) >= 4: break
@@ -88,16 +85,12 @@ def fetch_dynamic_themes():
                 "news": f"🚀 현재 시장 주도 테마: [{t['name']}] 관련주 수급 강세",
                 "stocks": stocks
             }
-
         return dynamic_theme_data, dynamic_stock_map
     except Exception as e:
-        # 스크래핑 실패 시 임시 더미 데이터 반환
         return {"시스템 안내": {"news": "실시간 테마를 불러오는 중입니다...", "stocks": ["삼성전자"]}}, {"삼성전자": "005930"}
 
-# 자동 수집된 테마와 종목 맵핑 데이터 로드
 theme_data, STOCK_MAP = fetch_dynamic_themes()
 
-# --- 핵심 기능 2: 추출된 종목들의 초고속 실시간 시세 폴링 API (5초 캐싱) ---
 @st.cache_data(ttl=5)
 def fetch_hts_api_prices(stock_map):
     if not stock_map: return {}
@@ -107,32 +100,35 @@ def fetch_hts_api_prices(stock_map):
     prices = {}
     try:
         res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3).json()
-        items = res.get("result", {}).get("areas", [{}])[0].get("datas", [])
-        for item in items:
-            code = item.get("cd")
-            name = [k for k, v in stock_map.items() if v == code]
-            if name:
-                name = name[0]
-                close = item.get("nv", 0)
-                chg_type = item.get("rf")
-                rate = item.get("cr", 0.0)
-                cv = item.get("cv", 0)
-                aq = item.get("aq", 0)
-                if close > 0:
-                    prices[name] = {
-                        "price": f"{close:,}", 
-                        "rate": f"{'+' if chg_type in ['1','2'] else '-' if chg_type in ['5'] else ''}{rate:.2f}%",
-                        "type": chg_type, 
-                        "diff": f"{cv:,}", 
-                        "volume": f"{int(aq * close / 100000000):,}억" if aq else "0억"
-                    }
+        
+        # --- 버그 수정: 코스피, 코스닥 모든 구역(areas)을 통합해서 검색 ---
+        areas = res.get("result", {}).get("areas", [])
+        for area in areas:
+            items = area.get("datas", [])
+            for item in items:
+                code = item.get("cd")
+                name = [k for k, v in stock_map.items() if v == code]
+                if name:
+                    name = name[0]
+                    close = item.get("nv", 0)
+                    chg_type = item.get("rf")
+                    rate = item.get("cr", 0.0)
+                    cv = item.get("cv", 0)
+                    aq = item.get("aq", 0)
+                    if close > 0:
+                        prices[name] = {
+                            "price": f"{close:,}", 
+                            "rate": f"{'+' if chg_type in ['1','2'] else '-' if chg_type in ['5'] else ''}{rate:.2f}%",
+                            "type": chg_type, 
+                            "diff": f"{cv:,}", 
+                            "volume": f"{int(aq * close / 100000000):,}억" if aq else "0억"
+                        }
         return prices
     except: 
         return {} 
 
 realtime_data = fetch_hts_api_prices(STOCK_MAP)
 
-# --- 구글 뉴스 실시간 크롤러 ---
 @st.cache_data(ttl=300)
 def fetch_live_global_financial_news(stock_name):
     encoded_name = urllib.parse.quote(stock_name)
@@ -185,7 +181,6 @@ def get_numeric_score(sname):
 all_stocks_data = []
 processed_themes = {} 
 
-# --- 상승률 계산 및 테마 정렬 로직 ---
 for t_name, t_val in theme_data.items():
     total_vol = 0
     sum_rate = 0.0
@@ -211,14 +206,12 @@ for t_name, t_val in theme_data.items():
         "avg_rate": avg_rate
     } 
 
-# 1순위: 섹터 평균 상승률 / 2순위: 합산 거래대금
 sorted_theme_names = sorted(
     processed_themes.keys(), 
     key=lambda x: (processed_themes[x]["avg_rate"], processed_themes[x]["total_vol"]), 
     reverse=True
 ) 
 
-# 예외처리 방어 로직 추가
 top_rate_stocks = sorted(all_stocks_data, key=lambda x: x[1], reverse=True)[:5] if all_stocks_data else []
 top_vol_stocks = sorted(all_stocks_data, key=lambda x: x[2], reverse=True)[:5] if all_stocks_data else []
 
