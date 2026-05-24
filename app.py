@@ -5,6 +5,7 @@ import urllib.parse
 from streamlit_autorefresh import st_autorefresh
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
+import re  # 공백 및 깨짐 방지용 정규식 모듈 추가
 
 # 1. 페이지 레이아웃 및 다크테마 최적화
 st.set_page_config(page_title="NXT 자동형 주도주 전광판", layout="wide")
@@ -64,11 +65,10 @@ def fetch_dynamic_themes():
         return {}, {}
 
 
-# [핵심 수정] 네이버 차단 방어 2중 우회 로직 (API -> 막히면 PC웹)
+# [핵심 수정] 글자 깨짐 완전 해결 (정규식으로 숨은 공백까지 싹 제거)
 def get_single_mcap(name_code):
     name, code = name_code
     
-    # 네이버 차단을 뚫기 위한 위장용 헤더
     api_headers = {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
         'Referer': 'https://m.stock.naver.com/',
@@ -76,23 +76,24 @@ def get_single_mcap(name_code):
     }
     
     try:
-        # [1단계] 모바일 JSON API (빠르고 깔끔함)
+        # [1단계] 모바일 JSON API
         url = f"https://m.stock.naver.com/api/stock/{code}/basic"
         res = requests.get(url, headers=api_headers, timeout=3)
         
         if res.status_code == 200:
             data = res.json()
-            m_sum_str = str(data.get("marketSum", "")).replace(",", "")
-            if m_sum_str.isdigit():
-                v = int(m_sum_str)
-                if v >= 10000:
-                    jo = v // 10000
-                    eok = v % 10000
-                    return name, f"{jo}조 {eok:,}억" if eok else f"{jo}조"
-                else:
-                    return name, f"{v:,}억"
+            m_sum_str = str(data.get("marketSum", "")).strip()
+            
+            if m_sum_str:
+                # 네이버가 주는 "1조 603" 문자열에서 공백만 깔끔하게 제거 ("1조603"으로 만듦)
+                val = re.sub(r'\s+', '', m_sum_str) 
+                
+                # 끝이 숫자(예: 603, 146)로 끝나면 '억'을 붙여줌
+                if val and val[-1].isdigit():
+                    val += "억"
+                return name, val
                     
-        # [2단계] 서버 IP가 밴 당했을 경우 PC 웹페이지 백업 파싱 (euc-kr 인코딩 필수)
+        # [2단계] PC 웹 백업 (만약을 대비한 우회로)
         pc_url = f"https://finance.naver.com/item/main.naver?code={code}"
         res_pc = requests.get(pc_url, headers=headers, timeout=3)
         res_pc.encoding = 'euc-kr' 
@@ -100,8 +101,10 @@ def get_single_mcap(name_code):
         
         m_sum = soup.select_one("#_market_sum")
         if m_sum:
-            val_str = m_sum.text.replace("\n", "").replace("\t", "").replace(" ", "").strip()
-            return name, f"{val_str}억"
+            val_str = re.sub(r'\s+', '', m_sum.text) # 숨겨진 줄바꿈, 탭, 공백 완벽 제거
+            if val_str and val_str[-1].isdigit():
+                val_str += "억"
+            return name, val_str
             
     except: 
         pass
