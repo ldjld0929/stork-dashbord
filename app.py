@@ -5,16 +5,20 @@ import urllib.parse
 from streamlit_autorefresh import st_autorefresh
 import xml.etree.ElementTree as ET 
 
+# 1. 페이지 레이아웃 및 다크테마 최적화 세팅
 st.set_page_config(page_title="NXT 주도주 통합 전광판", layout="wide") 
 
+# [수정] 모바일 가독성 및 강제 번역 차단
 st.markdown("""
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="google" content="notranslate">
 </head>
 <style>
-    /* 글씨 가독성 개선 */
+    /* 글자색을 밝은색으로 강제하여 가독성 확보 */
     body, .stMarkdown, .stText, .stExpander, .stSelectbox { color: #e2e8f0 !important; }
+    h4 { color: #ffffff !important; font-weight: 800 !important; }
+    
     [data-testid="stHeader"] {background: #0f141c;}
     body { background-color: #0f141c; }
     .theme-box { background-color: #17202e; border: 1px solid #233249; border-radius: 6px; padding: 10px; margin-bottom: 8px; margin-top: 15px; }
@@ -182,7 +186,6 @@ top_vol_stocks = sorted(all_stocks_data, key=lambda x: x[2], reverse=True)[:5]
 
 if "page_mode" not in st.session_state: st.session_state.page_mode = "main"
 if "active_stock" not in st.session_state: st.session_state.active_stock = None 
-
 query_params = st.query_params
 if "stock" in query_params and query_params["stock"]:
     st.session_state.active_stock = query_params["stock"]
@@ -194,7 +197,7 @@ def go_main():
     st.session_state.active_stock = None 
 
 if st.session_state.page_mode == "main":
-    st.markdown("<h3 style='margin:0 0 15px 0; color:#38bdf8;'>📱 실시간 주도주 랭킹 통합 전광판</h3>", unsafe_allow_html=True)
+    st.markdown("<h3 class='notranslate' style='margin:0 0 15px 0; color:#38bdf8;'>📱 실시간 주도주 랭킹 통합 전광판</h3>", unsafe_allow_html=True)
     stock_options = ["🔍 종목명을 검색하거나 선택하세요 (뉴스 확인)"] + list(STOCK_MAP.keys())
     selected_search = st.selectbox("", stock_options, label_visibility="collapsed") 
     if selected_search != stock_options[0]:
@@ -204,12 +207,12 @@ if st.session_state.page_mode == "main":
     st.markdown("<hr style='border-color: #334155; margin: 15px 0;'>", unsafe_allow_html=True)
     col1, col2 = st.columns(2)
     with col1:
-        st.markdown("<h4 style='color:#f8fafc; font-size:16px;'>🔥 전체 상승률 Top 5</h4>", unsafe_allow_html=True)
+        st.markdown("<h4 style='color:#ffffff; font-size:16px;'>🔥 전체 상승률 Top 5</h4>", unsafe_allow_html=True)
         for idx, (sname, r_val, v_val, s_info) in enumerate(top_rate_stocks):
             sign, color = ("▲", "#ef4444") if r_val > 0 else ("▼", "#3b82f6")
             st.markdown(f"<div class='rank-card notranslate' style='border-left-color: {color};'><div><span class='rank-num'>{idx+1}</span><span style='color:white; font-weight:bold;'>{sname}</span></div><div style='color:{color}; font-weight:bold;'>{sign} {s_info['rate']}</div></div>", unsafe_allow_html=True)
     with col2:
-        st.markdown("<h4 style='color:#f8fafc; font-size:16px;'>💰 전체 거래대금 Top 5</h4>", unsafe_allow_html=True)
+        st.markdown("<h4 style='color:#ffffff; font-size:16px;'>💰 전체 거래대금 Top 5</h4>", unsafe_allow_html=True)
         for idx, (sname, r_val, v_val, s_info) in enumerate(top_vol_stocks):
             st.markdown(f"<div class='rank-card notranslate' style='border-left-color: #eab308;'><div><span class='rank-num'>{idx+1}</span><span style='color:white; font-weight:bold;'>{sname}</span></div><div style='color:#eab308; font-weight:bold;'>{s_info['volume']}</div></div>", unsafe_allow_html=True) 
     st.markdown("<hr style='border-color: #334155; margin: 15px 0;'>", unsafe_allow_html=True)
@@ -221,7 +224,6 @@ if st.session_state.page_mode == "main":
             class_mode = "hts-limit" if s_info["type"] == "1" or "29.9" in s_info["rate"] else "hts-down" if s_info["type"] == "5" or "-" in s_info["rate"] else "hts-up"
             sign = "▲ " if class_mode != "hts-down" else "▼ "
             cols[idx % 4].markdown(f"<a class='notranslate' href='?stock={sname}' target='_self' style='text-decoration:none; color:inherit;'><div class='hts-card {class_mode}'><div class='hts-row' style='display:flex; justify-content:space-between;'><span class='stock-title' style='color:#ffffff; font-weight:bold;'>{sname}</span><span class='status-color' style='font-weight:bold;'>{sign}{s_info['rate']}</span></div><div class='hts-sub-row' style='display:flex; justify-content:space-between;'><span class='status-color'>{s_info['price']}원</span><span style='color:#94a3b8; font-size:12px;'>{s_info['volume']}</span></div></div></a>", unsafe_allow_html=True) 
-
 elif st.session_state.page_mode == "detail":
     if st.button("◀ 실시간 랭킹 전광판으로 돌아가기", use_container_width=True):
         go_main()
@@ -237,6 +239,6 @@ elif st.session_state.page_mode == "detail":
     if fetched_news:
         for nw in fetched_news:
             with st.expander(f"📌 [{nw['source']}] {nw['title']}"):
-                st.markdown(f"<p style='color:#cbd5e1; font-size:13px; line-height:1.6; margin-bottom:10px;'>{nw['desc']}</p>", unsafe_allow_html=True)
+                st.markdown(f"<p style='color:#e2e8f0; font-size:13px; line-height:1.6; margin-bottom:10px;'>{nw['desc']}</p>", unsafe_allow_html=True)
                 st.link_button("🔗 해당 언론사 원문 기사 전체보기", nw['link'])
     else: st.info("수집된 무료 실시간 속보가 없습니다.")
