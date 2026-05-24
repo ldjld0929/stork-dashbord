@@ -5,10 +5,8 @@ import urllib.parse
 from streamlit_autorefresh import st_autorefresh
 import xml.etree.ElementTree as ET 
 
-# 페이지 레이아웃 및 다크테마 세팅
 st.set_page_config(page_title="NXT 주도주 통합 전광판", layout="wide") 
 
-# 모바일 반응형 및 번역 차단 추가
 st.markdown("""
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -110,33 +108,25 @@ def fetch_live_global_financial_news(stock_name):
     url = f"https://news.google.com/rss/search?q={encoded_name}+-site:hankyung.com+-site:sedaily.com&hl=ko&gl=KR&ceid=KR:ko"
     headers = {'User-Agent': 'Mozilla/5.0'}
     news_list = [] 
-
     exclude_keywords = ["유료", "로그인", "회원전용", "구독"] 
-
     try:
         res = requests.get(url, headers=headers, timeout=5)
         root = ET.fromstring(res.content) 
-
         for item in root.findall('.//item'):
             title = item.find('title').text if item.find('title') is not None else ""
             link = item.find('link').text if item.find('link') is not None else "" 
-
             if any(k in title for k in exclude_keywords): continue
             if "hankyung.com" in link or "sedaily.com" in link: continue 
-
             source = item.find('source').text if item.find('source') is not None else "경제속보"
             date = item.find('pubDate').text if item.find('pubDate') is not None else "" 
-
             desc_text = "기사 요약 내용을 불러오는 중입니다."
             desc_elem = item.find('description')
             if desc_elem is not None and desc_elem.text:
                 raw_desc = desc_elem.text
                 desc_soup = BeautifulSoup(raw_desc, 'html.parser')
                 desc_text = desc_soup.get_text(strip=True)[:150] + "..." 
-
             if " - " in title: title = title.rsplit(" - ", 1)[0]
             news_list.append({"title": title, "link": link, "source": source, "date": date[:16], "desc": desc_text}) 
-
             if len(news_list) >= 5: break
         return news_list
     except: return [] 
@@ -151,7 +141,6 @@ def get_numeric_score(sname):
 
 all_stocks_data = []
 processed_themes = {} 
-
 for t_name, t_val in theme_data.items():
     total_vol = 0
     max_rate = -999.0
@@ -162,12 +151,10 @@ for t_name, t_val in theme_data.items():
         if r_val > max_rate: max_rate = r_val
         stock_list_with_score.append((sname, r_val, v_val, info))
         all_stocks_data.append((sname, r_val, v_val, info)) 
-
     stock_list_with_score.sort(key=lambda x: x[1], reverse=True)
     processed_themes[t_name] = {"money": f"{total_vol:,}억", "news": t_val["news"], "stocks_data": stock_list_with_score, "total_vol": total_vol} 
 
 sorted_theme_names = sorted(processed_themes.keys(), key=lambda x: processed_themes[x]["total_vol"], reverse=True) 
-
 top_rate_stocks = sorted(all_stocks_data, key=lambda x: x[1], reverse=True)[:5]
 top_vol_stocks = sorted(all_stocks_data, key=lambda x: x[2], reverse=True)[:5] 
 
@@ -196,7 +183,6 @@ body { background-color: #0f141c; }
 
 if "page_mode" not in st.session_state: st.session_state.page_mode = "main"
 if "active_stock" not in st.session_state: st.session_state.active_stock = None 
-
 query_params = st.query_params
 if "stock" in query_params and query_params["stock"]:
     st.session_state.active_stock = query_params["stock"]
@@ -211,12 +197,10 @@ if st.session_state.page_mode == "main":
     st.markdown("<h3 class='notranslate' style='margin:0 0 15px 0; color:#38bdf8;'>📱 실시간 주도주 랭킹 통합 전광판</h3>", unsafe_allow_html=True)
     stock_options = ["🔍 종목명을 검색하거나 선택하세요 (뉴스 확인)"] + list(STOCK_MAP.keys())
     selected_search = st.selectbox("", stock_options, label_visibility="collapsed") 
-
     if selected_search != stock_options[0]:
         st.session_state.active_stock = selected_search
         st.session_state.page_mode = "detail"
         st.rerun() 
-
     st.markdown("<hr style='border-color: #334155; margin: 15px 0;'>", unsafe_allow_html=True)
     col1, col2 = st.columns(2)
     with col1:
@@ -228,7 +212,6 @@ if st.session_state.page_mode == "main":
         st.markdown("<h4 style='color:#f8fafc; font-size:16px;'>💰 전체 거래대금 Top 5</h4>", unsafe_allow_html=True)
         for idx, (sname, r_val, v_val, s_info) in enumerate(top_vol_stocks):
             st.markdown(f"<div class='rank-card notranslate' style='border-left-color: #eab308;'><div><span class='rank-num'>{idx+1}</span><span style='color:white; font-weight:bold;'>{sname}</span></div><div style='color:#eab308; font-weight:bold;'>{s_info['volume']}</div></div>", unsafe_allow_html=True) 
-
     st.markdown("<hr style='border-color: #334155; margin: 15px 0;'>", unsafe_allow_html=True)
     for t_name in sorted_theme_names:
         t_val = processed_themes[t_name]
@@ -248,7 +231,7 @@ elif st.session_state.page_mode == "detail":
     _, _, live = get_numeric_score(tgt)
     mode_color = "#eab308" if live["type"] == "1" else "#ef4444" if live["type"] in ["2","1"] and "-" not in live["rate"] else "#3b82f6"
     sign = "▼" if "-" in live["rate"] or live["type"] == "5" else "▲"
-    st.markdown(f'<div class="detail-card notranslate"><div style="display:flex; justify-content:space-between; align-items:center;"><span style="font-size:22px; font-weight:bold; color:#f8fafc;">⭐ {tgt}</span><span style="color:#64748b; font-size:14px;">(주식코드 {tgt_code})</span></div><div style="margin: 10px 0; font-size:26px; font-weight:bold; color:{mode_color};">{live["price"]} <span style="font-size:15px;">{sign} {live.get("diff", "0")} ({live["rate"]})</span><span style='float:right; font-size:13px; color:#94a3b8; margin-top:10px;'>거래대금 {live["volume"]}</span></div></div>', unsafe_allow_html=True)
+    st.markdown(f"""<div class="detail-card notranslate"><div style="display:flex; justify-content:space-between; align-items:center;"><span style="font-size:22px; font-weight:bold; color:#f8fafc;">⭐ {tgt}</span><span style="color:#64748b; font-size:14px;">(주식코드 {tgt_code})</span></div><div style="margin: 10px 0; font-size:26px; font-weight:bold; color:{mode_color};">{live["price"]} <span style="font-size:15px;">{sign} {live.get("diff", "0")} ({live["rate"]})</span><span style='float:right; font-size:13px; color:#94a3b8; margin-top:10px;'>거래대금 {live["volume"]}</span></div></div>""", unsafe_allow_html=True)
     st.markdown("<p style='font-size:15px; font-weight:bold; color:#38bdf8; margin-top:5px;'>🔥 실시간 뉴스 피드</p>", unsafe_allow_html=True)
     fetched_news = fetch_live_global_financial_news(tgt)
     if fetched_news:
