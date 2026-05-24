@@ -18,7 +18,6 @@ st.markdown("""
     .theme-box { background-color: #17202e; border: 1px solid #233249; border-radius: 6px; padding: 10px; margin-bottom: 8px; margin-top: 15px; }
     .theme-top { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; }
     
-    /* 하얀 버튼 제거: a 태그용 hts-card */
     .hts-card { background-color: #1b2636; border: 1px solid #283954; border-radius: 4px; padding: 10px 12px; margin-bottom: 8px; display: block; text-decoration: none; color: inherit; }
     .hts-card:hover { border: 1px solid #38bdf8; background-color: #223147; }
     
@@ -29,9 +28,10 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
+# 5초 자동 새로고침
 st_autorefresh(interval=5000, key="hts_refresh")
 
-headers = {'User-Agent': 'Mozilla/5.0'}
+headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
 
 @st.cache_data(ttl=600)
 def fetch_dynamic_themes():
@@ -45,6 +45,7 @@ def fetch_dynamic_themes():
         for tr in soup.select('table.type_1 tr')[:8]:
             a = tr.select_one('a')
             if a: themes.append({'name': a.text.strip(), 'link': "https://finance.naver.com" + a['href']})
+            
         for t in themes:
             res_t = requests.get(t['link'], headers=headers, timeout=5)
             res_t.encoding = 'euc-kr'
@@ -59,35 +60,35 @@ def fetch_dynamic_themes():
                     stock_map[s_name] = s_code
             data[t['name']] = {"news": f"🚀 {t['name']} 섹터 집중 분석", "stocks": stocks}
         return data, stock_map
-    except: return {}, {}
+    except Exception as e: 
+        return {}, {}
 
-# [에러 원인 완벽 제거] 억지로 숫자로 변환(int)하지 않고, 네이버 화면의 글자 그대로 가져옴
+# [핵심 수정] 무거운 HTML 대신 빠르고 안정적인 모바일 JSON API 사용
 def get_single_mcap(name_code):
     name, code = name_code
     try:
-        url = f"https://finance.naver.com/item/main.naver?code={code}"
+        url = f"https://m.stock.naver.com/api/stock/{code}/basic"
         res = requests.get(url, headers=headers, timeout=3)
-        soup = BeautifulSoup(res.text, 'html.parser')
-        
-        m_sum = soup.select_one("#_market_sum")
-        if m_sum:
-            # "11조 8,829" -> "11조8,829억" 형태로 에러 없이 출력
-            val_str = m_sum.text.replace("\n", "").replace("\t", "").replace(" ", "").strip()
-            return name, f"{val_str}억"
-            
-        for th in soup.select('th'):
-            if "시가총액" in th.text:
-                td = th.find_next_sibling('td')
-                if td:
-                    text = td.text.replace("\n", "").replace("\t", "").replace(" ", "").strip()
-                    if not text.endswith("억"): text += "억"
-                    return name, text
-    except: pass
+        if res.status_code == 200:
+            data = res.json()
+            # marketSum은 네이버에서 "4,381,819" (억 단위) 형태로 제공함
+            m_sum_str = data.get("marketSum", "").replace(",", "")
+            if m_sum_str.isdigit():
+                v = int(m_sum_str)
+                if v >= 10000:
+                    jo = v // 10000
+                    eok = v % 10000
+                    return name, f"{jo}조 {eok:,}억" if eok else f"{jo}조"
+                else:
+                    return name, f"{v:,}억"
+    except: 
+        pass
     return name, "-"
 
 @st.cache_data(ttl=3600)
 def fetch_market_caps(stock_map):
-    with ThreadPoolExecutor(max_workers=10) as executor:
+    # API가 빠르기 때문에 스레드 5개 정도로도 충분하며 네이버 차단 회피
+    with ThreadPoolExecutor(max_workers=5) as executor:
         results = list(executor.map(get_single_mcap, stock_map.items()))
     return dict(results)
 
@@ -101,9 +102,10 @@ def fetch_prices(stock_map):
             res = requests.get(url, headers=headers, timeout=3).json()
             for area in res.get("result", {}).get("areas", []):
                 for item in area.get("datas", []):
-                    name = [k for k, v in stock_map.items() if v == item.get("cd")]
-                    if name:
-                        prices[name[0]] = {
+                    matched_names = [k for k, v in stock_map.items() if v == item.get("cd")]
+                    if matched_names:
+                        name = matched_names[0]
+                        prices[name] = {
                             "price": f"{item.get('nv', 0):,}", 
                             "rate": f"{'+' if item.get('cr', 0) > 0 else ''}{item.get('cr', 0):.2f}%",
                             "volume": f"{int(item.get('aq', 0) * item.get('nv', 0) / 100000000):,}억"
@@ -120,45 +122,70 @@ def fetch_news(stock_name):
         return [{"title": item.find('title').text, "link": item.find('link').text, "source": item.find('source').text if item.find('source') is not None else "경제속보"} for item in root.findall('.//item')[:5]]
     except: return []
 
-# 3. 로직 실행
+
+# 2. 상태(Session State) 관리
+if "page_mode" not in st.session_state: 
+    st.session_state.page_mode = "main"
+if "active_stock" not in st.session_state:
+    st.session_state.active_stock = ""
+if "search_key" not in st.session_state:
+    st.session_state.search_key = 0
+
+if "stock" in st.query_params:
+    st.session_state.active_stock = st.query_params["stock"]
+    st.session_state.page_mode = "detail"
+    del st.query_params["stock"]
+    st.rerun()
+
+# 3. 데이터 로드 및 로직 실행
 theme_data, STOCK_MAP = fetch_dynamic_themes()
 MCAP_DATA = fetch_market_caps(STOCK_MAP)
 realtime_data = fetch_prices(STOCK_MAP)
 
 all_stocks_data, processed_themes = [], {}
+
 for t_name, t_val in theme_data.items():
     stocks_list = []
     for sname in t_val["stocks"]:
         info = realtime_data.get(sname, {"price": "-", "rate": "0.00%", "volume": "0억"})
         try:
-            r = float(info["rate"].replace("%", "").replace("+", ""))
-            v = int(info["volume"].replace("억", "").replace(",", ""))
-        except: r, v = 0.0, 0
+            rate_str = info["rate"].replace("%", "").replace("+", "").replace(",", "")
+            vol_str = info["volume"].replace("억", "").replace(",", "")
+            r = float(rate_str) if rate_str and rate_str != "-" else 0.0
+            v = int(vol_str) if vol_str else 0
+        except ValueError:
+            r, v = 0.0, 0
+            
         stocks_list.append((sname, r, v, info))
         all_stocks_data.append((sname, r, v, info))
-    processed_themes[t_name] = {"news": t_val["news"], "stocks_data": stocks_list, "total_vol": sum(x[2] for x in stocks_list), "avg_rate": sum(x[1] for x in stocks_list)/len(stocks_list) if stocks_list else 0}
+        
+    total_vol = sum(x[2] for x in stocks_list)
+    avg_rate = sum(x[1] for x in stocks_list) / len(stocks_list) if stocks_list else 0.0
+    processed_themes[t_name] = {"news": t_val["news"], "stocks_data": stocks_list, "total_vol": total_vol, "avg_rate": avg_rate}
 
 top_rate = sorted(all_stocks_data, key=lambda x: x[1], reverse=True)[:5]
 top_vol = sorted(all_stocks_data, key=lambda x: x[2], reverse=True)[:5]
 
-if "page_mode" not in st.session_state: st.session_state.page_mode = "main"
-if "stock" in st.query_params:
-    st.session_state.active_stock = st.query_params["stock"]
-    st.session_state.page_mode = "detail"
-    st.query_params.clear()
 
 # 4. 화면 출력
 if st.session_state.page_mode == "main":
     st.markdown("<h3 style='color:#38bdf8;'>📱 실시간 주도주 랭킹 통합 전광판</h3>", unsafe_allow_html=True)
     
-    search = st.selectbox("", ["🔍 종목명을 검색하세요"] + list(STOCK_MAP.keys()), label_visibility="collapsed")
-    if search != "🔍 종목명을 검색하세요": st.session_state.active_stock = search; st.session_state.page_mode = "detail"; st.rerun()
+    options = ["🔍 종목명을 검색하세요"] + list(STOCK_MAP.keys())
+    search = st.selectbox("", options, label_visibility="collapsed", key=f"search_{st.session_state.search_key}")
+    
+    if search != "🔍 종목명을 검색하세요": 
+        st.session_state.active_stock = search
+        st.session_state.page_mode = "detail"
+        st.session_state.search_key += 1
+        st.rerun()
     
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("#### 🔥 급등 Top 5")
         for i, (s, r, v, info) in enumerate(top_rate):
-            st.markdown(f"<div class='rank-card'><span class='rank-num'>{i+1}</span><span style='flex:1;'>{s}</span><span style='color:#ef4444; font-weight:bold;'>{info['rate']}</span></div>", unsafe_allow_html=True)
+            color = "#ef4444" if r > 0 else "#3b82f6" if r < 0 else "#94a3b8"
+            st.markdown(f"<div class='rank-card'><span class='rank-num'>{i+1}</span><span style='flex:1;'>{s}</span><span style='color:{color}; font-weight:bold;'>{info['rate']}</span></div>", unsafe_allow_html=True)
     with c2:
         st.markdown("#### 💰 거래대금 Top 5")
         for i, (s, r, v, info) in enumerate(top_vol):
@@ -168,20 +195,37 @@ if st.session_state.page_mode == "main":
         t = processed_themes[t_name]
         st.markdown(f"<div class='theme-box'><div class='theme-top'><b>{t_name}</b> <span>평균 {t['avg_rate']:.2f}%</span></div></div>", unsafe_allow_html=True)
         for sname, r, v, info in sorted(t["stocks_data"], key=lambda x: x[1], reverse=True):
+            color = "#ef4444" if r > 0 else "#3b82f6" if r < 0 else "#94a3b8"
             st.markdown(f"""
                 <a href='?stock={sname}' style='text-decoration:none;'>
                     <div class='hts-card'>
-                        <div style='display:flex; justify-content:space-between;'><span style='font-weight:bold;'>{sname}</span><span style='color:#ef4444; font-weight:bold;'>{info['rate']}</span></div>
-                        <div style='font-size:11px; color:#94a3b8; margin-top:4px;'>{info['price']}원 | 시총 {MCAP_DATA.get(sname, '-')} | {info['volume']}</div>
+                        <div style='display:flex; justify-content:space-between;'><span style='font-weight:bold;'>{sname}</span><span style='color:{color}; font-weight:bold;'>{info['rate']}</span></div>
+                        <div style='font-size:11px; color:#94a3b8; margin-top:4px;'>{info['price']}원 | 시총: {MCAP_DATA.get(sname, '-')} | {info['volume']}</div>
                     </div>
                 </a>
             """, unsafe_allow_html=True)
+
 else:
-    if st.button("◀ 목록으로 돌아가기"): st.session_state.page_mode = "main"; st.rerun()
+    if st.button("◀ 목록으로 돌아가기"): 
+        st.session_state.page_mode = "main"
+        st.rerun()
+        
     tgt = st.session_state.active_stock
     info = realtime_data.get(tgt, {"price": "-", "rate": "0%", "volume": "0억"})
-    st.markdown(f"<div class='detail-card'><h3>⭐ {tgt}</h3><h2 style='color:#ef4444; margin:10px 0;'>{info['price']}원 ({info['rate']})</h2><p style='color:#cbd5e1;'>시가총액: <b>{MCAP_DATA.get(tgt, '-')}</b> | 거래대금: <b>{info['volume']}</b></p></div>", unsafe_allow_html=True)
+    
+    try:
+        r_val = float(info['rate'].replace('%', '').replace('+', '').replace(',', ''))
+        color = "#ef4444" if r_val > 0 else "#3b82f6" if r_val < 0 else "#94a3b8"
+    except:
+        color = "#ef4444"
+        
+    st.markdown(f"<div class='detail-card'><h3>⭐ {tgt}</h3><h2 style='color:{color}; margin:10px 0;'>{info['price']}원 ({info['rate']})</h2><p style='color:#cbd5e1;'>시가총액: <b>{MCAP_DATA.get(tgt, '-')}</b> | 거래대금: <b>{info['volume']}</b></p></div>", unsafe_allow_html=True)
     
     st.write("🔥 실시간 뉴스 피드")
-    for nw in fetch_news(tgt):
-        with st.expander(f"📌 [{nw['source']}] {nw['title']}"): st.link_button("🔗 원문 보기", nw['link'])
+    news_list = fetch_news(tgt)
+    if news_list:
+        for nw in news_list:
+            with st.expander(f"📌 [{nw['source']}] {nw['title']}"): 
+                st.link_button("🔗 원문 보기", nw['link'])
+    else:
+        st.info("현재 관련 뉴스가 없습니다.")
