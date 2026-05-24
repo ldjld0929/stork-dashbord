@@ -8,20 +8,17 @@ import xml.etree.ElementTree as ET
 # 1. 페이지 레이아웃 및 다크테마 최적화 세팅
 st.set_page_config(page_title="NXT 주도주 통합 전광판", layout="wide") 
 
-# [모바일 가독성 및 강제 번역 차단 + 배경색 강제 고정]
+# [모바일 가독성, 강제 번역 차단, 배경색 강제 고정 및 CSS 텍스트 노출 방지]
+# 주의: 이 아래의 markdown 안에는 절대 빈 줄(엔터)을 넣지 마세요!
 st.markdown("""
 <head>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="google" content="notranslate">
 </head>
 <style>
-/* 글자색을 밝은색으로 강제하여 가독성 확보 */
 body, .stMarkdown, .stText, .stExpander, .stSelectbox, h4 { color: #ffffff !important; } 
-
-/* 모바일 라이트모드 방지용 배경색 강제 지정 */
 [data-testid="stHeader"] {background: #0f141c !important;}
 body, .stApp, [data-testid="stAppViewContainer"], .main { background-color: #0f141c !important; }
-
 .theme-box { background-color: #17202e; border: 1px solid #233249; border-radius: 6px; padding: 10px; margin-bottom: 8px; margin-top: 15px; }
 .theme-top { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; }
 .theme-lbl { background-color: #1e3a5f; color: #38bdf8 !important; font-size: 13px; font-weight: bold; padding: 2px 10px; border-radius: 4px; }
@@ -267,9 +264,12 @@ elif st.session_state.page_mode == "detail":
     _, _, live = get_numeric_score(tgt)
     mode_color = "#eab308" if live["type"] == "1" else "#ef4444" if live["type"] in ["2","1"] and "-" not in live["rate"] else "#3b82f6"
     sign = "▼" if "-" in live["rate"] or live["type"] == "5" else "▲"
+    
     st.markdown(f"""<div class="detail-card notranslate"><div style="display:flex; justify-content:space-between; align-items:center;"><span style="font-size:22px; font-weight:bold; color:#f8fafc;">⭐ {tgt}</span><span style="color:#64748b; font-size:14px;">(주식코드 {tgt_code})</span></div><div style="margin: 10px 0; font-size:26px; font-weight:bold; color:{mode_color};">{live["price"]} <span style="font-size:15px;">{sign} {live.get("diff", "0")} ({live["rate"]})</span><span style="float:right; font-size:13px; color:#94a3b8; margin-top:10px;">거래대금 {live["volume"]}</span></div></div>""", unsafe_allow_html=True)
+    
     st.markdown("<p style='font-size:15px; font-weight:bold; color:#38bdf8; margin-top:5px;'>🔥 실시간 뉴스 피드</p>", unsafe_allow_html=True)
     fetched_news = fetch_live_global_financial_news(tgt)
+    
     if fetched_news:
         for nw in fetched_news:
             with st.expander(f"📌 [{nw['source']}] {nw['title']}"):
