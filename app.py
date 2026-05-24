@@ -61,7 +61,7 @@ def fetch_dynamic_themes():
         return data, stock_map
     except: return {}, {}
 
-# [핵심 수정] 1조 이상 종목 파싱 에러(ValueError) 완벽 해결
+# [에러 원인 완벽 제거] 억지로 숫자로 변환(int)하지 않고, 네이버 화면의 글자 그대로 가져옴
 def get_single_mcap(name_code):
     name, code = name_code
     try:
@@ -69,19 +69,18 @@ def get_single_mcap(name_code):
         res = requests.get(url, headers=headers, timeout=3)
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # 1차 시도 (ID로 찾기)
         m_sum = soup.select_one("#_market_sum")
         if m_sum:
-            # 억지로 int() 변환하지 않고, 네이버가 주는 텍스트(예: "1조 5,000" 또는 "2,146")를 그대로 사용
-            val_str = m_sum.text.strip().replace("\n", "").replace("\t", "").replace(" ", "")
+            # "11조 8,829" -> "11조8,829억" 형태로 에러 없이 출력
+            val_str = m_sum.text.replace("\n", "").replace("\t", "").replace(" ", "").strip()
             return name, f"{val_str}억"
-        
-        # 2차 시도 (Fallback)
+            
         for th in soup.select('th'):
             if "시가총액" in th.text:
                 td = th.find_next_sibling('td')
                 if td:
-                    text = td.text.strip().replace("\n", "").replace("\t", "").replace(" ", "")
+                    text = td.text.replace("\n", "").replace("\t", "").replace(" ", "").strip()
+                    if not text.endswith("억"): text += "억"
                     return name, text
     except: pass
     return name, "-"
