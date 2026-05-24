@@ -5,7 +5,7 @@ import urllib.parse
 from streamlit_autorefresh import st_autorefresh
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
-import re  # 공백 및 깨짐 방지용 정규식 모듈 추가
+import re
 
 # 1. 페이지 레이아웃 및 다크테마 최적화
 st.set_page_config(page_title="NXT 자동형 주도주 전광판", layout="wide")
@@ -32,7 +32,11 @@ st.markdown("""
 # 5초 자동 새로고침
 st_autorefresh(interval=5000, key="hts_refresh")
 
-headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+# 네이버 차단을 막기 위한 강력한 헤더
+headers = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+    'Accept-Language': 'ko-KR,ko;q=0.9'
+}
 
 @st.cache_data(ttl=600)
 def fetch_dynamic_themes():
@@ -40,8 +44,8 @@ def fetch_dynamic_themes():
     data, stock_map = {}, {}
     try:
         res = requests.get(url, headers=headers, timeout=5)
-        res.encoding = 'euc-kr'
-        soup = BeautifulSoup(res.text, 'html.parser')
+        html_text = res.content.decode('euc-kr', 'replace')
+        soup = BeautifulSoup(html_text, 'html.parser')
         themes = []
         for tr in soup.select('table.type_1 tr')[:8]:
             a = tr.select_one('a')
@@ -49,8 +53,8 @@ def fetch_dynamic_themes():
             
         for t in themes:
             res_t = requests.get(t['link'], headers=headers, timeout=5)
-            res_t.encoding = 'euc-kr'
-            soup_t = BeautifulSoup(res_t.text, 'html.parser')
+            html_t = res_t.content.decode('euc-kr', 'replace')
+            soup_t = BeautifulSoup(html_t, 'html.parser')
             stocks = []
             for tr in soup_t.select('table.type_5 tr'):
                 td = tr.select_one('td.name')
@@ -61,52 +65,45 @@ def fetch_dynamic_themes():
                     stock_map[s_name] = s_code
             data[t['name']] = {"news": f"🚀 {t['name']} 섹터 집중 분석", "stocks": stocks}
         return data, stock_map
-    except Exception as e: 
+    except Exception: 
         return {}, {}
 
 
-# [핵심 수정] 글자 깨짐 완전 해결 (정규식으로 숨은 공백까지 싹 제거)
+# [핵심 수정 1] 한자(議) 깨짐 완벽 방지: Raw Bytes 강제 디코딩
 def get_single_mcap(name_code):
     name, code = name_code
     
-    api_headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-        'Referer': 'https://m.stock.naver.com/',
-        'Accept': 'application/json, text/plain, */*'
-    }
-    
     try:
-        # [1단계] 모바일 JSON API
+        # [1단계] 모바일 JSON API 시도
         url = f"https://m.stock.naver.com/api/stock/{code}/basic"
-        res = requests.get(url, headers=api_headers, timeout=3)
-        
+        res = requests.get(url, headers=headers, timeout=3)
         if res.status_code == 200:
             data = res.json()
             m_sum_str = str(data.get("marketSum", "")).strip()
-            
             if m_sum_str:
-                # 네이버가 주는 "1조 603" 문자열에서 공백만 깔끔하게 제거 ("1조603"으로 만듦)
                 val = re.sub(r'\s+', '', m_sum_str) 
-                
-                # 끝이 숫자(예: 603, 146)로 끝나면 '억'을 붙여줌
                 if val and val[-1].isdigit():
                     val += "억"
                 return name, val
-                    
-        # [2단계] PC 웹 백업 (만약을 대비한 우회로)
+    except:
+        pass
+
+    try:
+        # [2단계] PC 웹 우회 (서버 인코딩 문제 원천 차단)
         pc_url = f"https://finance.naver.com/item/main.naver?code={code}"
         res_pc = requests.get(pc_url, headers=headers, timeout=3)
-        res_pc.encoding = 'euc-kr' 
-        soup = BeautifulSoup(res_pc.text, 'html.parser')
+        
+        # 여기서 requests가 맘대로 해석하지 못하게 바이트(content)를 강제로 euc-kr로 변환!
+        html_text = res_pc.content.decode('euc-kr', 'replace')
+        soup = BeautifulSoup(html_text, 'html.parser')
         
         m_sum = soup.select_one("#_market_sum")
         if m_sum:
-            val_str = re.sub(r'\s+', '', m_sum.text) # 숨겨진 줄바꿈, 탭, 공백 완벽 제거
+            val_str = re.sub(r'\s+', '', m_sum.text)
             if val_str and val_str[-1].isdigit():
                 val_str += "억"
             return name, val_str
-            
-    except: 
+    except:
         pass
         
     return name, "-"
@@ -117,6 +114,7 @@ def fetch_market_caps(stock_map):
         results = list(executor.map(get_single_mcap, stock_map.items()))
     return dict(results)
 
+# [핵심 수정 2] 거래대금(Volume) 정확도 100% 반영
 @st.cache_data(ttl=5)
 def fetch_prices(stock_map):
     prices = {}
@@ -130,10 +128,20 @@ def fetch_prices(stock_map):
                     matched_names = [k for k, v in stock_map.items() if v == item.get("cd")]
                     if matched_names:
                         name = matched_names[0]
+                        
+                        # aa = 실제 누적 거래대금 (백만원 단위)
+                        # HTS와 100% 동일하게 가져오기 위해 100으로 나누어 '억' 단위로 맞춤
+                        aa_val = item.get("aa")
+                        if aa_val is not None:
+                            vol_eok = int(aa_val) // 100
+                        else:
+                            # 만약의 경우를 대비한 백업 계산식
+                            vol_eok = int(item.get("aq", 0) * item.get("nv", 0) / 100000000)
+                            
                         prices[name] = {
                             "price": f"{item.get('nv', 0):,}", 
                             "rate": f"{'+' if item.get('cr', 0) > 0 else ''}{item.get('cr', 0):.2f}%",
-                            "volume": f"{int(item.get('aq', 0) * item.get('nv', 0) / 100000000):,}억"
+                            "volume": f"{vol_eok:,}억"
                         }
         except: pass
     return prices
