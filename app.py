@@ -10,7 +10,6 @@ import re
 # 1. 페이지 레이아웃 최적화 (모바일 뷰어 스타일에 맞춤)
 st.set_page_config(page_title="테마별 주도주", layout="wide")
 
-# [핵심] 보내주신 이미지와 똑같이 밝은 톤, 민트색 헤더, 2열 구조, 노란색 하이라이트 CSS 적용
 st.markdown("""
 <style>
     /* 전체 배경을 밝게 */
@@ -61,7 +60,7 @@ headers = {
 }
 
 @st.cache_data(ttl=600)
-def fetch_dynamic_themes_v3():
+def fetch_dynamic_themes_v4():
     url = "https://finance.naver.com/sise/theme.naver"
     data, stock_map = {}, {}
     try:
@@ -85,14 +84,13 @@ def fetch_dynamic_themes_v3():
                     s_code = td.a['href'].split('code=')[-1][:6]
                     stocks.append(s_name)
                     stock_map[s_name] = s_code
-            data[t['name']] = {"news": f"{t['name']} 관련 속보 및 종목 분석", "stocks": stocks[:5]} # 5개까지만
+            data[t['name']] = {"news": f"{t['name']} 관련 속보 및 종목 분석", "stocks": stocks[:5]}
         return data, stock_map
     except Exception: 
         return {}, {}
 
 @st.cache_data(ttl=3600)
-def fetch_market_caps_v3(stock_map):
-    # 시가총액은 메인 화면에서는 안 쓰지만, 상세 화면용으로 유지합니다.
+def fetch_market_caps_v4(stock_map):
     def get_mcap(name_code):
         name, code = name_code
         try:
@@ -113,7 +111,7 @@ def fetch_market_caps_v3(stock_map):
     return dict(results)
 
 @st.cache_data(ttl=5)
-def fetch_prices_v3(stock_map):
+def fetch_prices_v4(stock_map):
     prices = {}
     codes = list(stock_map.values())
     for i in range(0, len(codes), 20):
@@ -125,11 +123,13 @@ def fetch_prices_v3(stock_map):
                     matched = [k for k, v in stock_map.items() if v == item.get("cd")]
                     if matched:
                         name = matched[0]
+                        
+                        # [핵심 수정] 거래대금 폭주 오류 완벽 해결 (100,000,000으로 나눔)
                         aa_val = item.get("aa")
                         try:
                             if aa_val is not None:
                                 clean_aa = str(aa_val).replace(',', '').split('.')[0]
-                                vol_eok = int(clean_aa) // 100
+                                vol_eok = int(clean_aa) // 100000000
                             else:
                                 vol_eok = int(item.get("aq", 0) * item.get("nv", 0) / 100000000)
                         except:
@@ -137,7 +137,7 @@ def fetch_prices_v3(stock_map):
                             
                         prices[name] = {
                             "price": f"{item.get('nv', 0):,}", 
-                            "rate": f"{item.get('cr', 0):.2f}%", # '+' 기호 제거 (CSS로 색상 처리)
+                            "rate": f"{item.get('cr', 0):.2f}%",
                             "volume": f"{vol_eok:,}억"
                         }
         except: pass
@@ -153,10 +153,10 @@ if "stock" in st.query_params:
     del st.query_params["stock"]
     st.rerun()
 
-# 3. 데이터 로드 (v3)
-theme_data, STOCK_MAP = fetch_dynamic_themes_v3()
-MCAP_DATA = fetch_market_caps_v3(STOCK_MAP)
-realtime_data = fetch_prices_v3(STOCK_MAP)
+# 3. 데이터 로드 (v4)
+theme_data, STOCK_MAP = fetch_dynamic_themes_v4()
+MCAP_DATA = fetch_market_caps_v4(STOCK_MAP)
+realtime_data = fetch_prices_v4(STOCK_MAP)
 
 processed_themes = {}
 for t_name, t_val in theme_data.items():
@@ -177,7 +177,7 @@ for t_name, t_val in theme_data.items():
     processed_themes[t_name] = {"news": t_val["news"], "stocks_data": stocks_list, "total_vol": total_vol, "avg_rate": avg_rate}
 
 
-# 4. 화면 출력 (완벽한 이미지 복원 UI)
+# 4. 화면 출력
 if st.session_state.page_mode == "main":
     
     search = st.selectbox("", ["🔍 종목, 테마명을 입력하세요."] + list(STOCK_MAP.keys()), label_visibility="collapsed")
@@ -186,10 +186,9 @@ if st.session_state.page_mode == "main":
         st.session_state.page_mode = "detail"
         st.rerun()
     
-    # 테마 리스트 (정렬)
     sorted_themes = sorted(processed_themes.keys(), key=lambda x: (processed_themes[x]["avg_rate"], processed_themes[x]["total_vol"]), reverse=True)
     
-    # 2열(그리드) 배치
+    # 2열 배치
     for i in range(0, len(sorted_themes), 2):
         cols = st.columns(2)
         for j in range(2):
@@ -200,22 +199,17 @@ if st.session_state.page_mode == "main":
                 with cols[j]:
                     total_vol_str = f"{int(t['total_vol']):,}억"
                     
-                    # HTML 작성
-                    html_str = f"""
-                    <div class="theme-card">
-                        <div class="theme-header">
-                            <span>{t_name}</span>
-                            <span class="theme-vol">{total_vol_str}</span>
-                        </div>
-                        <div class="theme-news">{t['news']}</div>
-                    """
-                    
-                    # 종목 리스트 렌더링
+                    # [핵심 수정] HTML 코드 블록 렌더링 방지 (들여쓰기 완전 제거)
+                    html_str = f"""<div class="theme-card">
+<div class="theme-header">
+<span>{t_name}</span>
+<span class="theme-vol">{total_vol_str}</span>
+</div>
+<div class="theme-news">{t['news']}</div>
+"""
                     for sname, r, v, info in sorted(t["stocks_data"], key=lambda x: x[1], reverse=True):
-                        # 상한가(29% 이상)일 때 노란색 배경 클래스 적용
                         bg_class = "bg-upper-limit" if r >= 29.0 else ""
                         
-                        # 색상 및 화살표 처리
                         if r > 0:
                             color_class = "text-red"
                             rate_display = f"↑{r:.2f}%" if r >= 29.0 else f"{r:.2f}%"
@@ -227,25 +221,25 @@ if st.session_state.page_mode == "main":
                             rate_display = "0.00%"
                             
                         price_color = "text-red" if r > 0 else "text-blue" if r < 0 else "text-black"
+                        bar_color = "#ef4444" if r > 0 else "#3b82f6"
                         
-                        html_str += f"""
-                        <a href="?stock={sname}" class="stock-item {bg_class}">
-                            <div class="row1">
-                                <span class="s-name">{sname}</span>
-                                <span class="s-rate {color_class}">{rate_display}</span>
-                            </div>
-                            <div class="row2">
-                                <span class="s-price {price_color}">{info['price']}</span>
-                                <span class="s-vol">{info['volume']}</span>
-                            </div>
-                            <div class="visual-bar"><div class="visual-bar-fill" style="background-color: {'#ef4444' if r>0 else '#3b82f6'};"></div></div>
-                        </a>
-                        """
+                        # 여기서도 절대 띄어쓰기를 넣지 않습니다.
+                        html_str += f"""<a href="?stock={sname}" class="stock-item {bg_class}">
+<div class="row1">
+<span class="s-name">{sname}</span>
+<span class="s-rate {color_class}">{rate_display}</span>
+</div>
+<div class="row2">
+<span class="s-price {price_color}">{info['price']}</span>
+<span class="s-vol">{info['volume']}</span>
+</div>
+<div class="visual-bar"><div class="visual-bar-fill" style="background-color: {bar_color};"></div></div>
+</a>
+"""
                     html_str += "</div>"
                     st.markdown(html_str, unsafe_allow_html=True)
 
 else:
-    # 상세 페이지
     if st.button("◀ 목록으로 돌아가기"): st.session_state.page_mode = "main"; st.rerun()
     tgt = st.session_state.active_stock
     info = realtime_data.get(tgt, {"price": "-", "rate": "0%", "volume": "0억"})
@@ -256,9 +250,18 @@ else:
     except: color = "#ef4444"
         
     st.markdown(f"""
-        <div style='background:#fff; border:1px solid #d1d5db; padding:20px; border-radius:8px;'>
-            <h3 style='color:#111;'>⭐ {tgt}</h3>
-            <h2 style='color:{color}; margin:10px 0;'>{info['price']}원 ({info['rate']})</h2>
-            <p style='color:#475569;'>시가총액: <b>{MCAP_DATA.get(tgt, '-')}</b> | 거래대금: <b>{info['volume']}</b></p>
-        </div>
-    """, unsafe_allow_html=True)
+<div style="background:#fff; border:1px solid #d1d5db; padding:20px; border-radius:8px;">
+<h3 style="color:#111;">⭐ {tgt}</h3>
+<h2 style="color:{color}; margin:10px 0;">{info['price']}원 ({info['rate']})</h2>
+<p style="color:#475569;">시가총액: <b>{MCAP_DATA.get(tgt, '-')}</b> | 거래대금: <b>{info['volume']}</b></p>
+</div>
+""", unsafe_allow_html=True)
+    
+    st.write("🔥 실시간 뉴스 피드")
+    news_list = fetch_news(tgt)
+    if news_list:
+        for nw in news_list:
+            with st.expander(f"📌 [{nw['source']}] {nw['title']}"): 
+                st.link_button("🔗 원문 보기", nw['link'])
+    else:
+        st.info("현재 관련 뉴스가 없습니다.")
