@@ -61,7 +61,7 @@ def fetch_dynamic_themes():
         return data, stock_map
     except: return {}, {}
 
-# [핵심 1] 시가총액 2중 안전장치 파싱
+# [핵심 수정] 1조 이상 종목 파싱 에러(ValueError) 완벽 해결
 def get_single_mcap(name_code):
     name, code = name_code
     try:
@@ -72,20 +72,20 @@ def get_single_mcap(name_code):
         # 1차 시도 (ID로 찾기)
         m_sum = soup.select_one("#_market_sum")
         if m_sum:
-            val = int(m_sum.text.replace(",", "").strip())
-            return name, (f"{val/10000:.1f}조" if val >= 10000 else f"{val:,}억")
+            # 억지로 int() 변환하지 않고, 네이버가 주는 텍스트(예: "1조 5,000" 또는 "2,146")를 그대로 사용
+            val_str = m_sum.text.strip().replace("\n", "").replace("\t", "").replace(" ", "")
+            return name, f"{val_str}억"
         
-        # 2차 시도 (텍스트로 찾기 - 예: 우선주, ETF 등)
+        # 2차 시도 (Fallback)
         for th in soup.select('th'):
             if "시가총액" in th.text:
                 td = th.find_next_sibling('td')
                 if td:
-                    text = td.text.strip().replace("\\n", "").replace("\\t", "").replace(" ", "")
+                    text = td.text.strip().replace("\n", "").replace("\t", "").replace(" ", "")
                     return name, text
     except: pass
     return name, "-"
 
-# [핵심 2] 병렬 처리로 속도 향상 (멈춤 현상 방지)
 @st.cache_data(ttl=3600)
 def fetch_market_caps(stock_map):
     with ThreadPoolExecutor(max_workers=10) as executor:
@@ -152,11 +152,9 @@ if "stock" in st.query_params:
 if st.session_state.page_mode == "main":
     st.markdown("<h3 style='color:#38bdf8;'>📱 실시간 주도주 랭킹 통합 전광판</h3>", unsafe_allow_html=True)
     
-    # [복구 완료] 1. 종목 검색창
     search = st.selectbox("", ["🔍 종목명을 검색하세요"] + list(STOCK_MAP.keys()), label_visibility="collapsed")
     if search != "🔍 종목명을 검색하세요": st.session_state.active_stock = search; st.session_state.page_mode = "detail"; st.rerun()
     
-    # [복구 완료] 2. 급등주 & 거래대금 TOP 5
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("#### 🔥 급등 Top 5")
@@ -167,7 +165,6 @@ if st.session_state.page_mode == "main":
         for i, (s, r, v, info) in enumerate(top_vol):
             st.markdown(f"<div class='rank-card'><span class='rank-num'>{i+1}</span><span style='flex:1;'>{s}</span><span style='color:#eab308; font-weight:bold;'>{info['volume']}</span></div>", unsafe_allow_html=True)
     
-    # [복구 완료] 3. 테마 및 종목 (하얀 띠 없는 카드)
     for t_name in sorted(processed_themes.keys(), key=lambda x: (processed_themes[x]["avg_rate"], processed_themes[x]["total_vol"]), reverse=True):
         t = processed_themes[t_name]
         st.markdown(f"<div class='theme-box'><div class='theme-top'><b>{t_name}</b> <span>평균 {t['avg_rate']:.2f}%</span></div></div>", unsafe_allow_html=True)
@@ -181,7 +178,6 @@ if st.session_state.page_mode == "main":
                 </a>
             """, unsafe_allow_html=True)
 else:
-    # [복구 완료] 4. 상세 페이지 및 뉴스 피드
     if st.button("◀ 목록으로 돌아가기"): st.session_state.page_mode = "main"; st.rerun()
     tgt = st.session_state.active_stock
     info = realtime_data.get(tgt, {"price": "-", "rate": "0%", "volume": "0억"})
