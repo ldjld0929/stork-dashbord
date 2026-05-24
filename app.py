@@ -63,16 +63,26 @@ def fetch_dynamic_themes():
     except Exception as e: 
         return {}, {}
 
-# [핵심 수정] 무거운 HTML 대신 빠르고 안정적인 모바일 JSON API 사용
+
+# [핵심 수정] 네이버 차단 방어 2중 우회 로직 (API -> 막히면 PC웹)
 def get_single_mcap(name_code):
     name, code = name_code
+    
+    # 네이버 차단을 뚫기 위한 위장용 헤더
+    api_headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Referer': 'https://m.stock.naver.com/',
+        'Accept': 'application/json, text/plain, */*'
+    }
+    
     try:
+        # [1단계] 모바일 JSON API (빠르고 깔끔함)
         url = f"https://m.stock.naver.com/api/stock/{code}/basic"
-        res = requests.get(url, headers=headers, timeout=3)
+        res = requests.get(url, headers=api_headers, timeout=3)
+        
         if res.status_code == 200:
             data = res.json()
-            # marketSum은 네이버에서 "4,381,819" (억 단위) 형태로 제공함
-            m_sum_str = data.get("marketSum", "").replace(",", "")
+            m_sum_str = str(data.get("marketSum", "")).replace(",", "")
             if m_sum_str.isdigit():
                 v = int(m_sum_str)
                 if v >= 10000:
@@ -81,13 +91,25 @@ def get_single_mcap(name_code):
                     return name, f"{jo}조 {eok:,}억" if eok else f"{jo}조"
                 else:
                     return name, f"{v:,}억"
+                    
+        # [2단계] 서버 IP가 밴 당했을 경우 PC 웹페이지 백업 파싱 (euc-kr 인코딩 필수)
+        pc_url = f"https://finance.naver.com/item/main.naver?code={code}"
+        res_pc = requests.get(pc_url, headers=headers, timeout=3)
+        res_pc.encoding = 'euc-kr' 
+        soup = BeautifulSoup(res_pc.text, 'html.parser')
+        
+        m_sum = soup.select_one("#_market_sum")
+        if m_sum:
+            val_str = m_sum.text.replace("\n", "").replace("\t", "").replace(" ", "").strip()
+            return name, f"{val_str}억"
+            
     except: 
         pass
+        
     return name, "-"
 
 @st.cache_data(ttl=3600)
 def fetch_market_caps(stock_map):
-    # API가 빠르기 때문에 스레드 5개 정도로도 충분하며 네이버 차단 회피
     with ThreadPoolExecutor(max_workers=5) as executor:
         results = list(executor.map(get_single_mcap, stock_map.items()))
     return dict(results)
