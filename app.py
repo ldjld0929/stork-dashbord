@@ -129,14 +129,14 @@ def fetch_market_caps(stock_map):
 
 MCAP_DATA = fetch_market_caps(STOCK_MAP)
 
-# ★★★ 여기서부터 거래대금 오차 100% 교정 부분 ★★★
+# ★★★ 여기서부터 네이버 마감과 똑같이 맞추는 실시간 거래대금 연동 핵심 수정 ★★★
 @st.cache_data(ttl=5)
 def fetch_hts_api_prices(stock_map):
     if not stock_map: return {}
     codes = list(stock_map.values())
     prices = {}
     
-    # 1. API 호출 기본 바인딩 (가격, 등락률 세팅)
+    # 1. 실시간 API 호출을 통한 기본 가격 및 변동률 바인딩
     chunk_size = 20
     for i in range(0, len(codes), chunk_size):
         chunk = codes[i:i+chunk_size]
@@ -168,34 +168,30 @@ def fetch_hts_api_prices(stock_map):
                             }
         except: pass
 
-    # 2. 인코딩 버그 해결 및 메인 페이지 실시간 거래대금 크롤링 함수 정의
+    # 2. 네이버 금융 상세페이지 웹크롤러 정밀 교정 (실시간 '거래대금' 타겟 추적)
     def fetch_exact_volume(name, code):
         try:
             url = f"https://finance.naver.com/item/main.naver?code={code}"
             res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=2)
-            res.encoding = 'euc-kr'  # 한글 깨짐 방지 필수 지정 (이 부분이 누락되어 매칭에 실패했었습니다)
+            res.encoding = 'euc-kr'
             html_text = res.text
             
-            # 구조적 매칭 시도 (BeautifulSoup)
             soup = BeautifulSoup(html_text, 'html.parser')
-            tag = soup.find(lambda t: t.name in ['span', 'th', 'td', 'em'] and t.text and '거래대금' in t.text)
-            if tag:
-                p_tag = tag.parent
-                for _ in range(3):
-                    if p_tag:
-                        em = p_tag.find('em')
-                        if em:
-                            val = em.text.replace(',', '').replace(' ', '').strip()
-                            if val.isdigit():
-                                val_int = int(val)
-                                if val_int >= 100:
-                                    return name, f"{val_int // 100:,}억"
-                                else:
-                                    return name, f"{val_int / 100:.1f}억"
-                    p_tag = p_tag.parent
+            # 네이버 웹페이지에서 '거래대금' 글자를 찾은 뒤 바로 다음에 위치하는 <em> 태그의 숫자를 가져옵니다.
+            element = soup.find(text=re.compile('거래대금'))
+            if element:
+                em = element.find_next('em')
+                if em:
+                    val = em.text.replace(',', '').strip()
+                    if val.isdigit():
+                        val_int = int(val)
+                        if val_int >= 100:
+                            return name, f"{val_int // 100:,}억"
+                        else:
+                            return name, f"{val_int / 100:.1f}억"
             
-            # 예외 대비 정규식 매칭 시도 (Regex)
-            match = re.search(r'거래대금.*?<em>([\d,]+)</em>', html_text, re.DOTALL)
+            # 돔 구조 탐색 예외 발생 시 정규식을 이용한 2차 백업 스크래핑 기법 가동
+            match = re.search(r'거래대금[\s\S]*?<em>([\d,]+)</em>', html_text)
             if match:
                 val = match.group(1).replace(',', '').strip()
                 if val.isdigit():
@@ -208,7 +204,7 @@ def fetch_hts_api_prices(stock_map):
             pass
         return name, None
 
-    # 초고속 병렬 처리를 통해 종목별 메인페이지 실제 거래대금 값 동시 주입
+    # 초고속 병렬 처리를 이용해 종목별 네이버 웹 화면의 찐 거래대금 실시간 동시 주입
     if prices:
         with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
             future_to_stock = {executor.submit(fetch_exact_volume, name, stock_map[name]): name for name in prices.keys()}
@@ -218,7 +214,7 @@ def fetch_hts_api_prices(stock_map):
                     prices[name]["volume"] = exact_vol_str
 
     return prices
-# ★====================================================★
+# ★===================================================================★
 
 realtime_data = fetch_hts_api_prices(STOCK_MAP)
 
