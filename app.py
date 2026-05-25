@@ -46,12 +46,17 @@ st_autorefresh(interval=5000, key="hts_refresh")
 @st.cache_data(ttl=600)
 def fetch_dynamic_themes():
     url = "https://finance.naver.com/sise/theme.naver"
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    # 네이버 접속 차단을 뚫기 위해 크롬 브라우저 헤더 풀세팅으로 위장
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7'
+    }
     dynamic_theme_data = {}
     dynamic_stock_map = {} 
 
     try:
-        res = requests.get(url, headers=headers, timeout=5)
+        res = requests.get(url, headers=headers, timeout=10)
         res.encoding = 'euc-kr'
         soup = BeautifulSoup(res.text, 'html.parser') 
 
@@ -67,7 +72,7 @@ def fetch_dynamic_themes():
                 if len(themes) >= 8: break 
 
         for t in themes:
-            res_t = requests.get(t['link'], headers=headers, timeout=5)
+            res_t = requests.get(t['link'], headers=headers, timeout=10)
             res_t.encoding = 'euc-kr'
             soup_t = BeautifulSoup(res_t.text, 'html.parser') 
 
@@ -88,19 +93,19 @@ def fetch_dynamic_themes():
             }
         return dynamic_theme_data, dynamic_stock_map
     except Exception as e:
-        return {"시스템 안내": {"news": "데이터 로딩 중...", "stocks": ["삼성전자"]}}, {"삼성전자": "005930"} 
+        return {"시스템 안내 (에러)": {"news": "일시적인 데이터 로딩 실패. 잠시 후 다시 시도됩니다.", "stocks": ["삼성전자"]}}, {"삼성전자": "005930"} 
 
 theme_data, STOCK_MAP = fetch_dynamic_themes() 
 
 @st.cache_data(ttl=3600)
 def fetch_market_caps(stock_map):
     caps = {}
-    headers = {'User-Agent': 'Mozilla/5.0'} 
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'} 
 
     def fetch_single_cap(name, code):
         try:
             url = f"https://finance.naver.com/item/main.naver?code={code}"
-            res = requests.get(url, headers=headers, timeout=3)
+            res = requests.get(url, headers=headers, timeout=5)
             soup = BeautifulSoup(res.text, 'html.parser') 
 
             m_sum_tag = soup.select_one("#_market_sum")
@@ -132,12 +137,15 @@ def fetch_hts_api_prices(stock_map):
     codes = list(stock_map.values())
     prices = {}
     chunk_size = 20
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'
+    }
     for i in range(0, len(codes), chunk_size):
         chunk = codes[i:i+chunk_size]
         codes_str = ",".join(chunk)
         url = f"https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:{codes_str}"
         try:
-            res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3).json()
+            res = requests.get(url, headers=headers, timeout=5).json()
             for area in res.get("result", {}).get("areas", []):
                 for item in area.get("datas", []):
                     code = item.get("cd")
@@ -148,17 +156,23 @@ def fetch_hts_api_prices(stock_map):
                     chg_type = item.get("rf")
                     rate = item.get("cr", 0.0)
                     cv = item.get("cv", 0)
-                    # aq(누적거래량) 대신 aa(거래대금, 백만원 단위)를 직접 호출
+                    aq = item.get("aq", 0)
                     aa = item.get("aa", 0) 
                     
                     if close > 0:
+                        # 🚨 [수정 완료] aa가 '원' 단위이므로 정확히 1억(100,000,000)으로 나눔
+                        if aa > 0:
+                            vol_str = f"{int(aa // 100000000):,}억"
+                        else:
+                            # aa 값이 안 넘어올 경우를 대비한 안전망 (누적거래량 * 현재가)
+                            vol_str = f"{int(aq * close / 100000000):,}억" if aq else "0억"
+
                         prices[name] = {
                             "price": f"{close:,}", 
                             "rate": f"{'+' if chg_type in ['1','2'] else '-' if chg_type in ['5'] else ''}{rate:.2f}%",
                             "type": chg_type, 
                             "diff": f"{cv:,}", 
-                            # 네이버 API의 aa는 백만원 단위이므로 100으로 나누어 '억' 단위로 완벽하게 변환
-                            "volume": f"{int(aa // 100):,}억" if aa else "0억"
+                            "volume": vol_str
                         }
         except: pass
     return prices 
@@ -169,7 +183,7 @@ realtime_data = fetch_hts_api_prices(STOCK_MAP)
 def fetch_live_global_financial_news(stock_name):
     encoded_name = urllib.parse.quote(stock_name)
     url = f"https://news.google.com/rss/search?q={encoded_name}+-site:hankyung.com+-site:sedaily.com&hl=ko&gl=KR&ceid=KR:ko"
-    headers = {'User-Agent': 'Mozilla/5.0'}
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36'}
     news_list = []
     try:
         res = requests.get(url, headers=headers, timeout=5)
