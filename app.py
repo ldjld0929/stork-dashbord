@@ -3,265 +3,281 @@ import requests
 from bs4 import BeautifulSoup
 import urllib.parse
 from streamlit_autorefresh import st_autorefresh
-import xml.etree.ElementTree as ET
-from concurrent.futures import ThreadPoolExecutor
-import re
+import xml.etree.ElementTree as ET 
+import concurrent.futures  # 병렬 처리를 위한 라이브러리 추가
 
-# 1. 페이지 레이아웃 최적화 (모바일 뷰어 스타일에 맞춤)
-st.set_page_config(page_title="테마별 주도주", layout="wide")
+# 1. 페이지 레이아웃 및 다크테마 최적화 세팅
+st.set_page_config(page_title="NXT 자동형 주도주 전광판", layout="wide") 
 
+# [모바일 가독성, 강제 번역 차단, 배경색 강제 고정 및 CSS 텍스트 노출 방지]
 st.markdown("""
+<head>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="google" content="notranslate">
+</head>
 <style>
-    /* 전체 배경을 밝게 */
-    body, .stApp, [data-testid="stAppViewContainer"], .main { background-color: #f0f4f5 !important; color: #111 !important; }
-    
-    /* 테마 카드 컨테이너 */
-    .theme-card { background: #ffffff; border: 1px solid #d1d5db; border-radius: 8px; margin-bottom: 12px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.05); }
-    
-    /* 테마 헤더 (민트색) */
-    .theme-header { background-color: #17b6b6; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; color: white; font-weight: bold; font-size: 1.1em; }
-    .theme-vol { background: white; color: #ef4444; padding: 2px 8px; border-radius: 4px; font-size: 0.9em; font-weight: bold; border: 1px solid #ef4444; }
-    
-    /* 테마 뉴스 (회색바탕) */
-    .theme-news { background: #f8fafc; padding: 6px 12px; font-size: 0.85em; color: #475569; border-bottom: 1px solid #e2e8f0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    
-    /* 개별 종목 컨테이너 */
-    .stock-item { padding: 10px 12px; border-bottom: 1px solid #f1f5f9; display: block; text-decoration: none; color: inherit; }
-    .stock-item:last-child { border-bottom: none; }
-    .stock-item:hover { background-color: #f8fafc; }
-    
-    /* 상한가 노란색 강조 배경 */
-    .bg-upper-limit { background-color: #fffac0 !important; border-left: 3px solid #ef4444; }
-    
-    /* 텍스트 색상 및 정렬 */
-    .row1, .row2 { display: flex; justify-content: space-between; align-items: center; }
-    .row1 { margin-bottom: 4px; }
-    
-    .s-name { font-weight: 600; font-size: 1.05em; color: #1f2937; }
-    .s-rate { font-weight: bold; font-size: 1.05em; }
-    .s-price { font-weight: bold; font-size: 0.95em; }
-    .s-vol { font-weight: bold; color: #374151; font-size: 0.9em; }
-    
-    .text-red { color: #ef4444 !important; }
-    .text-blue { color: #3b82f6 !important; }
-    .text-black { color: #1f2937 !important; }
-    
-    /* 시각적 바 (가짜 게이지 효과) */
-    .visual-bar { height: 4px; background: #e2e8f0; border-radius: 2px; margin-top: 6px; width: 100%; position: relative; }
-    .visual-bar-fill { height: 100%; background: #ef4444; border-radius: 2px; position: absolute; right: 10%; width: 40%; }
+body, .stMarkdown, .stText, .stExpander, .stSelectbox, h4 { color: #ffffff !important; }
+[data-testid="stHeader"] {background: #0f141c !important;}
+body, .stApp, [data-testid="stAppViewContainer"], .main { background-color: #0f141c !important; }
+.theme-box { background-color: #17202e; border: 1px solid #233249; border-radius: 6px; padding: 10px; margin-bottom: 8px; margin-top: 15px; }
+.theme-top { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; }
+.theme-lbl { background-color: #1e3a5f; color: #38bdf8 !important; font-size: 13px; font-weight: bold; padding: 2px 10px; border-radius: 4px; }
+.theme-amt { color: #f43f5e !important; font-size: 13px; font-weight: bold; }
+.theme-desc { color: #94a3b8 !important; font-size: 11px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hts-card { background-color: #1b2636; border: 1px solid #283954; border-radius: 4px; padding: 10px 12px; margin-bottom: 8px; height: 62px; display: flex; flex-direction: column; justify-content: center; cursor: pointer; }
+.hts-card:hover { border: 1px solid #38bdf8; background-color: #223147; }
+.hts-up .status-color { color: #ef4444 !important; }
+.hts-down .status-color { color: #3b82f6 !important; }
+.hts-limit { background-color: #eab308 !important; border: 1px solid #facc15 !important; }
+.hts-limit .stock-title { color: #000000 !important; }
+.hts-limit .status-color { color: #d32f2f !important; font-weight: 900; }
+.hts-limit .hts-sub-row { color: #334155 !important; }
+.detail-card { background-color: #17202e; border: 1px solid #283954; padding: 14px; border-radius: 8px; margin-bottom: 15px; }
+.stExpander { background-color: #1b2636 !important; border: 1px solid #283954 !important; margin-bottom: 6px !important; border-radius: 4px !important; }
+.rank-card { background-color: #1e293b; border-left: 3px solid #38bdf8; padding: 8px 12px; border-radius: 4px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
+.rank-num { color: #38bdf8; font-weight: bold; margin-right: 10px; }
 </style>
-""", unsafe_allow_html=True)
+""", unsafe_allow_html=True) 
 
-st_autorefresh(interval=5000, key="hts_refresh")
-
-headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept-Language': 'ko-KR,ko;q=0.9'
-}
+st_autorefresh(interval=5000, key="hts_refresh") 
 
 @st.cache_data(ttl=600)
-def fetch_dynamic_themes_v4():
+def fetch_dynamic_themes():
     url = "https://finance.naver.com/sise/theme.naver"
-    data, stock_map = {}, {}
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    dynamic_theme_data = {}
+    dynamic_stock_map = {} 
+
     try:
         res = requests.get(url, headers=headers, timeout=5)
-        html_text = res.content.decode('euc-kr', 'replace')
-        soup = BeautifulSoup(html_text, 'html.parser')
+        res.encoding = 'euc-kr'
+        soup = BeautifulSoup(res.text, 'html.parser') 
+
         themes = []
-        for tr in soup.select('table.type_1 tr')[:8]:
-            a = tr.select_one('a')
-            if a: themes.append({'name': a.text.strip(), 'link': "https://finance.naver.com" + a['href']})
-            
+        for tr in soup.select('table.type_1 tr'):
+            tds = tr.select('td')
+            if len(tds) >= 2:
+                a_tag = tds[0].select_one('a')
+                if not a_tag: continue
+                theme_name = a_tag.text.strip()
+                theme_link = "https://finance.naver.com" + a_tag['href']
+                themes.append({'name': theme_name, 'link': theme_link})
+                if len(themes) >= 8: break 
+
         for t in themes:
             res_t = requests.get(t['link'], headers=headers, timeout=5)
-            html_t = res_t.content.decode('euc-kr', 'replace')
-            soup_t = BeautifulSoup(html_t, 'html.parser')
+            res_t.encoding = 'euc-kr'
+            soup_t = BeautifulSoup(res_t.text, 'html.parser') 
+
             stocks = []
             for tr in soup_t.select('table.type_5 tr'):
-                td = tr.select_one('td.name')
-                if td and td.a:
-                    s_name = td.a.text.replace("*", "").strip()
-                    s_code = td.a['href'].split('code=')[-1][:6]
-                    stocks.append(s_name)
-                    stock_map[s_name] = s_code
-            data[t['name']] = {"news": f"{t['name']} 관련 속보 및 종목 분석", "stocks": stocks[:5]}
-        return data, stock_map
-    except Exception: 
-        return {}, {}
+                name_td = tr.select_one('td.name')
+                if name_td:
+                    a_tag = name_td.select_one('a')
+                    if a_tag:
+                        s_name = a_tag.text.replace("*", "").strip()
+                        s_code = a_tag['href'].split('code=')[-1][:6]
+                        stocks.append(s_name)
+                        dynamic_stock_map[s_name] = s_code 
 
+            dynamic_theme_data[t['name']] = {
+                "news": f"🚀 {t['name']} 섹터 집중 분석",
+                "stocks": stocks
+            }
+        return dynamic_theme_data, dynamic_stock_map
+    except Exception as e:
+        return {"시스템 안내": {"news": "데이터 로딩 중...", "stocks": ["삼성전자"]}}, {"삼성전자": "005930"} 
+
+theme_data, STOCK_MAP = fetch_dynamic_themes() 
+
+# --- [개선] 시가총액 대량 호출을 병렬 스레드로 가속화 ---
 @st.cache_data(ttl=3600)
-def fetch_market_caps_v4(stock_map):
-    def get_mcap(name_code):
-        name, code = name_code
+def fetch_market_caps(stock_map):
+    caps = {}
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    
+    # 단건 요청용 내부 함수
+    def fetch_single_cap(name, code):
         try:
             url = f"https://m.stock.naver.com/api/stock/{code}/basic"
-            res = requests.get(url, headers=headers, timeout=3)
-            if res.status_code == 200:
-                data = res.json()
-                m_sum_str = str(data.get("marketSum", "")).strip()
-                if m_sum_str:
-                    val = re.sub(r'\s+', '', m_sum_str) 
-                    if val and val[-1].isdigit(): val += "억"
-                    return name, val
-        except: pass
-        return name, "-"
-        
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        results = list(executor.map(get_mcap, stock_map.items()))
-    return dict(results)
+            res = requests.get(url, headers=headers, timeout=2).json()
+            m_sum = res.get("marketSum", "0")
+            val = int(str(m_sum).replace(",", ""))
+            cap_str = f"{val/10000:.1f}조" if val >= 10000 else f"{val:,}억"
+            return name, cap_str
+        except:
+            return name, "-"
+
+    # 최대 20개의 스레드를 띄워 병렬로 동시 요청 수행
+    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+        future_to_stock = {executor.submit(fetch_single_cap, name, code): name for name, code in stock_map.items()}
+        for future in concurrent.futures.as_completed(future_to_stock):
+            name, cap_str = future.result()
+            caps[name] = cap_str
+            
+    return caps 
+
+MCAP_DATA = fetch_market_caps(STOCK_MAP) 
 
 @st.cache_data(ttl=5)
-def fetch_prices_v4(stock_map):
-    prices = {}
+def fetch_hts_api_prices(stock_map):
+    if not stock_map: return {}
     codes = list(stock_map.values())
-    for i in range(0, len(codes), 20):
-        url = f"https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:{','.join(codes[i:i+20])}"
+    prices = {}
+    chunk_size = 20
+    for i in range(0, len(codes), chunk_size):
+        chunk = codes[i:i+chunk_size]
+        codes_str = ",".join(chunk)
+        url = f"https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:{codes_str}"
         try:
-            res = requests.get(url, headers=headers, timeout=3).json()
+            res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3).json()
             for area in res.get("result", {}).get("areas", []):
                 for item in area.get("datas", []):
-                    matched = [k for k, v in stock_map.items() if v == item.get("cd")]
-                    if matched:
-                        name = matched[0]
-                        
-                        # [핵심 수정] 거래대금 폭주 오류 완벽 해결 (100,000,000으로 나눔)
-                        aa_val = item.get("aa")
-                        try:
-                            if aa_val is not None:
-                                clean_aa = str(aa_val).replace(',', '').split('.')[0]
-                                vol_eok = int(clean_aa) // 100000000
-                            else:
-                                vol_eok = int(item.get("aq", 0) * item.get("nv", 0) / 100000000)
-                        except:
-                            vol_eok = int(item.get("aq", 0) * item.get("nv", 0) / 100000000)
-                            
-                        prices[name] = {
-                            "price": f"{item.get('nv', 0):,}", 
-                            "rate": f"{item.get('cr', 0):.2f}%",
-                            "volume": f"{vol_eok:,}억"
-                        }
+                    code = item.get("cd")
+                    name = [k for k, v in stock_map.items() if v == code]
+                    if name:
+                        name = name[0]
+                        close = item.get("nv", 0)
+                        chg_type = item.get("rf")
+                        rate = item.get("cr", 0.0)
+                        cv = item.get("cv", 0)
+                        aq = item.get("aq", 0)
+                        if close > 0:
+                            prices[name] = {
+                                "price": f"{close:,}", 
+                                "rate": f"{'+' if chg_type in ['1','2'] else '-' if chg_type in ['5'] else ''}{rate:.2f}%",
+                                "type": chg_type, 
+                                "diff": f"{cv:,}", 
+                                "volume": f"{int(aq * close / 100000000):,}억" if aq else "0억"
+                            }
         except: pass
-    return prices
+    return prices 
 
-# 2. 상태 관리
-if "page_mode" not in st.session_state: st.session_state.page_mode = "main"
-if "active_stock" not in st.session_state: st.session_state.active_stock = ""
+realtime_data = fetch_hts_api_prices(STOCK_MAP) 
 
-if "stock" in st.query_params:
-    st.session_state.active_stock = st.query_params["stock"]
-    st.session_state.page_mode = "detail"
-    del st.query_params["stock"]
-    st.rerun()
+@st.cache_data(ttl=300)
+def fetch_live_global_financial_news(stock_name):
+    encoded_name = urllib.parse.quote(stock_name)
+    url = f"https://news.google.com/rss/search?q={encoded_name}+-site:hankyung.com+-site:sedaily.com&hl=ko&gl=KR&ceid=KR:ko"
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    news_list = []
+    try:
+        res = requests.get(url, headers=headers, timeout=5)
+        root = ET.fromstring(res.content)
+        for item in root.findall('.//item'):
+            title = item.find('title').text if item.find('title') is not None else ""
+            link = item.find('link').text if item.find('link') is not None else ""
+            if any(k in title for k in ["유료", "로그인", "회원전용", "구독"]): continue
+            if "hankyung.com" in link or "sedaily.com" in link: continue
+            source = item.find('source').text if item.find('source') is not None else "경제속보"
+            desc_text = "기사 요약 내용을 불러오는 중입니다."
+            desc_elem = item.find('description')
+            if desc_elem is not None and desc_elem.text:
+                raw_desc = desc_elem.text
+                desc_soup = BeautifulSoup(raw_desc, 'html.parser')
+                desc_text = desc_soup.get_text(strip=True)[:150] + "..."
+            if " - " in title: title = title.rsplit(" - ", 1)[0]
+            news_list.append({"title": title, "link": link, "source": source, "desc": desc_text})
+            if len(news_list) >= 5: break
+        return news_list
+    except: return [] 
 
-# 3. 데이터 로드 (v4)
-theme_data, STOCK_MAP = fetch_dynamic_themes_v4()
-MCAP_DATA = fetch_market_caps_v4(STOCK_MAP)
-realtime_data = fetch_prices_v4(STOCK_MAP)
+def get_numeric_score(sname):
+    info = realtime_data.get(sname, {"price": "-", "rate": "0.00%", "type": "3", "volume": "0억", "diff": "0"})
+    info["mcap"] = MCAP_DATA.get(sname, "-")
+    try:
+        rate_val = float(info["rate"].replace("%", "").replace("+", ""))
+        vol_val = int(info["volume"].replace("억", "").replace(",", ""))
+    except:
+        rate_val = 0.0
+        vol_val = 0
+    return rate_val, vol_val, info 
 
-processed_themes = {}
+all_stocks_data = []
+processed_themes = {} 
+
 for t_name, t_val in theme_data.items():
-    stocks_list = []
+    total_vol = 0
+    sum_rate = 0.0
+    stock_list_with_score = [] 
+
     for sname in t_val["stocks"]:
-        info = realtime_data.get(sname, {"price": "-", "rate": "0.00%", "volume": "0억"})
-        try:
-            rate_str = info["rate"].replace("%", "").replace(",", "")
-            vol_str = info["volume"].replace("억", "").replace(",", "")
-            r = float(rate_str) if rate_str and rate_str != "-" else 0.0
-            v = int(vol_str) if vol_str else 0
-        except ValueError:
-            r, v = 0.0, 0
-        stocks_list.append((sname, r, v, info))
-        
-    total_vol = sum(x[2] for x in stocks_list)
-    avg_rate = sum(x[1] for x in stocks_list) / len(stocks_list) if stocks_list else 0.0
-    processed_themes[t_name] = {"news": t_val["news"], "stocks_data": stocks_list, "total_vol": total_vol, "avg_rate": avg_rate}
+        r_val, v_val, info = get_numeric_score(sname)
+        total_vol += v_val
+        sum_rate += r_val
+        stock_list_with_score.append((sname, r_val, v_val, info))
+        all_stocks_data.append((sname, r_val, v_val, info)) 
 
+    valid_stocks = len(t_val["stocks"])
+    avg_rate = sum_rate / valid_stocks if valid_stocks > 0 else 0.0 
 
-# 4. 화면 출력
+    processed_themes[t_name] = {
+        "money": f"{total_vol:,}억",
+        "news": t_val["news"],
+        "stocks_data": stock_list_with_score,
+        "total_vol": total_vol,
+        "avg_rate": avg_rate
+    } 
+
+sorted_theme_names = sorted(processed_themes.keys(), key=lambda x: (processed_themes[x]["avg_rate"], processed_themes[x]["total_vol"]), reverse=True)
+top_rate_stocks = sorted(all_stocks_data, key=lambda x: x[1], reverse=True)[:5] if all_stocks_data else []
+top_vol_stocks = sorted(all_stocks_data, key=lambda x: x[2], reverse=True)[:5] if all_stocks_data else [] 
+
+if "page_mode" not in st.session_state: st.session_state.page_mode = "main"
+if "active_stock" not in st.session_state: st.session_state.active_stock = None 
+
+query_params = st.query_params
+if "stock" in query_params and query_params["stock"]:
+    st.session_state.active_stock = query_params["stock"]
+    st.session_state.page_mode = "detail"
+    st.query_params.clear() 
+
+def go_main():
+    st.session_state.page_mode = "main"
+    st.session_state.active_stock = None 
+
 if st.session_state.page_mode == "main":
-    
-    search = st.selectbox("", ["🔍 종목, 테마명을 입력하세요."] + list(STOCK_MAP.keys()), label_visibility="collapsed")
-    if search != "🔍 종목, 테마명을 입력하세요.": 
-        st.session_state.active_stock = search
+    st.markdown("<h3 class='notranslate' style='margin:0 0 15px 0; color:#38bdf8;'>📱 실시간 주도주 랭킹 통합 전광판 (Full 집계)</h3>", unsafe_allow_html=True)
+    stock_options = ["🔍 종목명을 검색하세요"] + list(STOCK_MAP.keys())
+    selected_search = st.selectbox("", stock_options, label_visibility="collapsed")
+    if selected_search != stock_options[0]:
+        st.session_state.active_stock = selected_search
         st.session_state.page_mode = "detail"
         st.rerun()
-    
-    sorted_themes = sorted(processed_themes.keys(), key=lambda x: (processed_themes[x]["avg_rate"], processed_themes[x]["total_vol"]), reverse=True)
-    
-    # 2열 배치
-    for i in range(0, len(sorted_themes), 2):
-        cols = st.columns(2)
-        for j in range(2):
-            if i + j < len(sorted_themes):
-                t_name = sorted_themes[i + j]
-                t = processed_themes[t_name]
-                
-                with cols[j]:
-                    total_vol_str = f"{int(t['total_vol']):,}억"
-                    
-                    # [핵심 수정] HTML 코드 블록 렌더링 방지 (들여쓰기 완전 제거)
-                    html_str = f"""<div class="theme-card">
-<div class="theme-header">
-<span>{t_name}</span>
-<span class="theme-vol">{total_vol_str}</span>
-</div>
-<div class="theme-news">{t['news']}</div>
-"""
-                    for sname, r, v, info in sorted(t["stocks_data"], key=lambda x: x[1], reverse=True):
-                        bg_class = "bg-upper-limit" if r >= 29.0 else ""
-                        
-                        if r > 0:
-                            color_class = "text-red"
-                            rate_display = f"↑{r:.2f}%" if r >= 29.0 else f"{r:.2f}%"
-                        elif r < 0:
-                            color_class = "text-blue"
-                            rate_display = f"{r:.2f}%"
-                        else:
-                            color_class = "text-black"
-                            rate_display = "0.00%"
-                            
-                        price_color = "text-red" if r > 0 else "text-blue" if r < 0 else "text-black"
-                        bar_color = "#ef4444" if r > 0 else "#3b82f6"
-                        
-                        # 여기서도 절대 띄어쓰기를 넣지 않습니다.
-                        html_str += f"""<a href="?stock={sname}" class="stock-item {bg_class}">
-<div class="row1">
-<span class="s-name">{sname}</span>
-<span class="s-rate {color_class}">{rate_display}</span>
-</div>
-<div class="row2">
-<span class="s-price {price_color}">{info['price']}</span>
-<span class="s-vol">{info['volume']}</span>
-</div>
-<div class="visual-bar"><div class="visual-bar-fill" style="background-color: {bar_color};"></div></div>
-</a>
-"""
-                    html_str += "</div>"
-                    st.markdown(html_str, unsafe_allow_html=True)
+    st.markdown("<hr style='border-color: #334155; margin: 15px 0;'>", unsafe_allow_html=True)
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("<h4 style='color:#ffffff; font-size:16px;'>🔥 현재 장중 급등 Top 5</h4>", unsafe_allow_html=True)
+        for idx, (sname, r_val, v_val, s_info) in enumerate(top_rate_stocks):
+            sign, color = ("▲", "#ef4444") if r_val > 0 else ("▼", "#3b82f6")
+            st.markdown(f"<div class='rank-card notranslate' style='border-left-color: {color};'><div><span class='rank-num'>{idx+1}</span><span style='color:white; font-weight:bold;'>{sname}</span></div><div style='color:{color}; font-weight:bold;'>{sign} {s_info['rate']}</div></div>", unsafe_allow_html=True)
+    with col2:
+        st.markdown("<h4 style='color:#ffffff; font-size:16px;'>💰 현재 거래대금 Top 5</h4>", unsafe_allow_html=True)
+        for idx, (sname, r_val, v_val, s_info) in enumerate(top_vol_stocks):
+            st.markdown(f"<div class='rank-card notranslate' style='border-left-color: #eab308;'><div><span class='rank-num'>{idx+1}</span><span style='color:white; font-weight:bold;'>{sname}</span></div><div style='color:#eab308; font-weight:bold;'>{s_info['volume']}</div></div>", unsafe_allow_html=True) 
 
-else:
-    if st.button("◀ 목록으로 돌아가기"): st.session_state.page_mode = "main"; st.rerun()
+    st.markdown("<hr style='border-color: #334155; margin: 15px 0;'>", unsafe_allow_html=True)
+    for t_name in sorted_theme_names:
+        t_val = processed_themes[t_name]
+        avg_str = f"+{t_val['avg_rate']:.2f}%" if t_val['avg_rate'] > 0 else f"{t_val['avg_rate']:.2f}%"
+        avg_color = "#ef4444" if t_val['avg_rate'] > 0 else "#3b82f6" if t_val['avg_rate'] < 0 else "#94a3b8"
+        st.markdown(f'''<div class="theme-box notranslate"><div class="theme-top"><span class="theme-lbl">{t_name} (섹터순위)</span><div style="text-align: right;"><span style="color: {avg_color} !important; font-size: 13px; font-weight: bold; margin-right: 8px;">평균 {avg_str}</span><span class="theme-amt">합산 {t_val["money"]}</span></div></div><div class="theme-desc">{t_val["news"]}</div></div>''', unsafe_allow_html=True)
+        cols = st.columns(4)
+        sorted_stocks = sorted(t_val["stocks_data"], key=lambda x: x[1], reverse=True)
+        for idx, (sname, r_val, v_val, s_info) in enumerate(sorted_stocks):
+            class_mode = "hts-limit" if s_info["type"] == "1" else "hts-down" if s_info["type"] == "5" or "-" in s_info["rate"] else "hts-up"
+            sign = "▲ " if class_mode != "hts-down" else "▼ "
+            cols[idx % 4].markdown(f"<a class='notranslate' href='?stock={sname}' target='_self' style='text-decoration:none; color:inherit;'><div class='hts-card {class_mode}'><div class='hts-row' style='display:flex; justify-content:space-between;'><span class='stock-title' style='color:#ffffff; font-weight:bold; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;'>{sname}</span><span class='status-color' style='font-weight:bold; margin-left:4px;'>{sign}{s_info['rate']}</span></div><div class='hts-sub-row' style='display:flex; justify-content:space-between; margin-top:2px;'><span class='status-color'>{s_info['price']}원</span><div style='text-align:right;'><span style='color:#64748b; font-size:10px;'>{s_info['mcap']}</span> <span style='color:#94a3b8; font-size:10px;'>{s_info['volume']}</span></div></div></div></a>", unsafe_allow_html=True) 
+
+elif st.session_state.page_mode == "detail":
+    if st.button("◀ 실시간 랭킹 전광판으로 돌아가기", use_container_width=True): go_main(); st.rerun()
     tgt = st.session_state.active_stock
-    info = realtime_data.get(tgt, {"price": "-", "rate": "0%", "volume": "0억"})
-    
-    try:
-        r_val = float(info['rate'].replace('%', '').replace('+', '').replace(',', ''))
-        color = "#ef4444" if r_val > 0 else "#3b82f6" if r_val < 0 else "#1f2937"
-    except: color = "#ef4444"
-        
-    st.markdown(f"""
-<div style="background:#fff; border:1px solid #d1d5db; padding:20px; border-radius:8px;">
-<h3 style="color:#111;">⭐ {tgt}</h3>
-<h2 style="color:{color}; margin:10px 0;">{info['price']}원 ({info['rate']})</h2>
-<p style="color:#475569;">시가총액: <b>{MCAP_DATA.get(tgt, '-')}</b> | 거래대금: <b>{info['volume']}</b></p>
-</div>
-""", unsafe_allow_html=True)
-    
-    st.write("🔥 실시간 뉴스 피드")
-    news_list = fetch_news(tgt)
-    if news_list:
-        for nw in news_list:
-            with st.expander(f"📌 [{nw['source']}] {nw['title']}"): 
-                st.link_button("🔗 원문 보기", nw['link'])
-    else:
-        st.info("현재 관련 뉴스가 없습니다.")
+    tgt_code = STOCK_MAP.get(tgt, "005930")
+    _, _, live = get_numeric_score(tgt)
+    mode_color = "#eab308" if live["type"] == "1" else "#ef4444" if live["type"] in ["2","1"] and "-" not in live["rate"] else "#3b82f6"
+    st.markdown(f"""<div class="detail-card notranslate"><div style="display:flex; justify-content:space-between; align-items:center;"><span style="font-size:22px; font-weight:bold; color:#f8fafc;">⭐ {tgt}</span><span style="color:#64748b; font-size:14px;">(코드 {tgt_code})</span></div><div style="margin: 10px 0; font-size:26px; font-weight:bold; color:{mode_color};">{live["price"]} <span style="font-size:15px; color:#cbd5e1;">({live["rate"]})</span><span style="float:right; font-size:13px; color:#94a3b8; margin-top:10px;">시총 {live["mcap"]} | 거래대금 {live["volume"]}</span></div></div>""", unsafe_allow_html=True)
+    st.markdown("<p style='font-size:15px; font-weight:bold; color:#38bdf8; margin-top:5px;'>🔥 실시간 뉴스 피드</p>", unsafe_allow_html=True)
+    for nw in fetch_live_global_financial_news(tgt):
+        with st.expander(f"📌 [{nw['source']}] {nw['title']}"): 
+            st.markdown(f"<p style='color:#cbd5e1; font-size:13px; line-height:1.6;'>{nw['desc']}</p>", unsafe_allow_html=True)
+            st.link_button("🔗 원문 보기", nw['link'])
