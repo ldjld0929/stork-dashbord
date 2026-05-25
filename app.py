@@ -5,6 +5,7 @@ import urllib.parse
 from streamlit_autorefresh import st_autorefresh
 import xml.etree.ElementTree as ET
 import concurrent.futures
+import re
 
 # 1. 페이지 레이아웃 및 다크테마 최적화 세팅
 st.set_page_config(page_title="NXT 자동형 주도주 전광판", layout="wide")
@@ -128,14 +129,14 @@ def fetch_market_caps(stock_map):
 
 MCAP_DATA = fetch_market_caps(STOCK_MAP)
 
-# ★★★ 여기서부터 거래대금 완벽 일치 수정 부분 ★★★
+# ★★★ 여기서부터 거래대금 오차 100% 교정 부분 ★★★
 @st.cache_data(ttl=5)
 def fetch_hts_api_prices(stock_map):
     if not stock_map: return {}
     codes = list(stock_map.values())
     prices = {}
     
-    # 1. 1차 세팅: 기존 API로 현재가/등락률 빠르게 세팅
+    # 1. API 호출 기본 바인딩 (가격, 등락률 세팅)
     chunk_size = 20
     for i in range(0, len(codes), chunk_size):
         chunk = codes[i:i+chunk_size]
@@ -155,7 +156,6 @@ def fetch_hts_api_prices(stock_map):
                         cv = item.get("cv", 0)
                         aq = item.get("aq", 0)
                         
-                        # API 오류를 대비한 예비(Fallback) 거래대금 계산
                         fallback_vol = f"{int(aq * close / 100000000):,}억" if aq else "0억"
                         
                         if close > 0:
@@ -164,38 +164,61 @@ def fetch_hts_api_prices(stock_map):
                                 "rate": f"{'+' if chg_type in ['1','2'] else '-' if chg_type in ['5'] else ''}{rate:.2f}%",
                                 "type": chg_type, 
                                 "diff": f"{cv:,}", 
-                                "volume": fallback_vol # 일단 예비값 부여
+                                "volume": fallback_vol
                             }
         except: pass
 
-    # 2. 2차 세팅: [틀린 API 버리고 네이버 화면 텍스트 100% 똑같이 긁어오기]
+    # 2. 인코딩 버그 해결 및 메인 페이지 실시간 거래대금 크롤링 함수 정의
     def fetch_exact_volume(name, code):
         try:
-            url = f"https://finance.naver.com/item/sise.naver?code={code}"
+            url = f"https://finance.naver.com/item/main.naver?code={code}"
             res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=2)
-            soup = BeautifulSoup(res.text, 'html.parser')
-            # '거래대금'이 적혀있는 줄을 찾아 네이버 PC 화면의 544,040백만 글자를 그대로 가져옴
-            th = soup.find('th', string=lambda text: text and '거래대금' in text)
-            if th:
-                td = th.find_next_sibling('td')
-                if td:
-                    val = td.text.replace(',', '').replace('백만', '').replace(' ', '').replace('\n', '').strip()
-                    if val.isdigit():
-                        return name, f"{int(val) // 100:,}억"
+            res.encoding = 'euc-kr'  # 한글 깨짐 방지 필수 지정 (이 부분이 누락되어 매칭에 실패했었습니다)
+            html_text = res.text
+            
+            # 구조적 매칭 시도 (BeautifulSoup)
+            soup = BeautifulSoup(html_text, 'html.parser')
+            tag = soup.find(lambda t: t.name in ['span', 'th', 'td', 'em'] and t.text and '거래대금' in t.text)
+            if tag:
+                p_tag = tag.parent
+                for _ in range(3):
+                    if p_tag:
+                        em = p_tag.find('em')
+                        if em:
+                            val = em.text.replace(',', '').replace(' ', '').strip()
+                            if val.isdigit():
+                                val_int = int(val)
+                                if val_int >= 100:
+                                    return name, f"{val_int // 100:,}억"
+                                else:
+                                    return name, f"{val_int / 100:.1f}억"
+                    p_tag = p_tag.parent
+            
+            # 예외 대비 정규식 매칭 시도 (Regex)
+            match = re.search(r'거래대금.*?<em>([\d,]+)</em>', html_text, re.DOTALL)
+            if match:
+                val = match.group(1).replace(',', '').strip()
+                if val.isdigit():
+                    val_int = int(val)
+                    if val_int >= 100:
+                        return name, f"{val_int // 100:,}억"
+                    else:
+                        return name, f"{val_int / 100:.1f}억"
         except:
             pass
         return name, None
 
-    # 실시간 속도를 위해 15개 쓰레드로 동시에 화면 정보 수집하여 덮어쓰기
-    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
-        future_to_stock = {executor.submit(fetch_exact_volume, name, code): name for name, code in stock_map.items()}
-        for future in concurrent.futures.as_completed(future_to_stock):
-            name, vol_str = future.result()
-            if name in prices and vol_str:
-                prices[name]["volume"] = vol_str
+    # 초고속 병렬 처리를 통해 종목별 메인페이지 실제 거래대금 값 동시 주입
+    if prices:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
+            future_to_stock = {executor.submit(fetch_exact_volume, name, stock_map[name]): name for name in prices.keys()}
+            for future in concurrent.futures.as_completed(future_to_stock):
+                name, exact_vol_str = future.result()
+                if exact_vol_str:
+                    prices[name]["volume"] = exact_vol_str
 
     return prices
-# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+# ★====================================================★
 
 realtime_data = fetch_hts_api_prices(STOCK_MAP)
 
@@ -231,7 +254,11 @@ def get_numeric_score(sname):
     info["mcap"] = MCAP_DATA.get(sname, "-")
     try:
         rate_val = float(info["rate"].replace("%", "").replace("+", ""))
-        vol_val = int(info["volume"].replace("억", "").replace(",", ""))
+        vol_raw = info["volume"].replace("억", "").replace(",", "")
+        if '.' in vol_raw:
+            vol_val = int(float(vol_raw))
+        else:
+            vol_val = int(vol_raw)
     except:
         rate_val = 0.0
         vol_val = 0
