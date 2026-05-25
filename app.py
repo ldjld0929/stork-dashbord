@@ -95,56 +95,41 @@ def fetch_dynamic_themes():
 
 theme_data, STOCK_MAP = fetch_dynamic_themes() 
 
-# 🔥 [핵심 수정] 네이버 웹 화면에서 '시가총액'과 '거래대금'을 둘 다 긁어옵니다.
-@st.cache_data(ttl=15)
-def fetch_stock_details(stock_map):
-    details = {}
+@st.cache_data(ttl=3600)
+def fetch_market_caps(stock_map):
+    caps = {}
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36'} 
 
-    def fetch_single(name, code):
+    def fetch_single_cap(name, code):
         try:
             url = f"https://finance.naver.com/item/main.naver?code={code}"
             res = requests.get(url, headers=headers, timeout=5)
             soup = BeautifulSoup(res.text, 'html.parser') 
 
-            # 1. 시가총액 추출
-            cap_str = "-"
+            # 시가총액은 고정 텍스트라 스크래핑으로 완벽하게 가져옵니다.
             m_sum_tag = soup.select_one("#_market_sum")
             if m_sum_tag:
                 val_str = " ".join(m_sum_tag.text.strip().split()) 
-                cap_str = val_str if val_str.endswith("조") else f"{val_str}억"
-            
-            # 2. 거래대금 추출 (네이버 화면과 100% 동기화)
-            vol_str = "0억"
-            rate_info = soup.select_one(".rate_info")
-            if rate_info:
-                for span in rate_info.select("span"):
-                    if "거래대금" in span.text:
-                        parent = span.parent
-                        if parent:
-                            em = parent.select_one("em")
-                            if em:
-                                val = em.text.replace(",", "").strip()
-                                if val.isdigit():
-                                    # 네이버 웹은 '백만' 단위이므로 100으로 나누어 '억'으로 맞춰줍니다.
-                                    vol_str = f"{int(val) // 100:,}억"
-                                    break
-
-            return name, {"mcap": cap_str, "volume": vol_str}
+                if val_str.endswith("조"):
+                    cap_str = val_str
+                else:
+                    cap_str = f"{val_str}억"
+                return name, cap_str
+            else:
+                return name, "-"
         except:
-            return name, {"mcap": "-", "volume": "0억"} 
+            return name, "-" 
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        future_to_stock = {executor.submit(fetch_single, name, code): name for name, code in stock_map.items()}
+        future_to_stock = {executor.submit(fetch_single_cap, name, code): name for name, code in stock_map.items()}
         for future in concurrent.futures.as_completed(future_to_stock):
-            name, data = future.result()
-            details[name] = data 
+            name, cap_str = future.result()
+            caps[name] = cap_str 
 
-    return details
+    return caps
 
-STOCK_DETAILS = fetch_stock_details(STOCK_MAP) 
+MCAP_DATA = fetch_market_caps(STOCK_MAP) 
 
-# 현재가와 상승률만 초고속 API를 사용합니다.
 @st.cache_data(ttl=5)
 def fetch_hts_api_prices(stock_map):
     if not stock_map: return {}
@@ -169,12 +154,24 @@ def fetch_hts_api_prices(stock_map):
                     rate = item.get("cr", 0.0)
                     cv = item.get("cv", 0)
                     
+                    # 🔥 [0원 에러 완벽 해결] 에러 났던 스크래핑 버리고 가장 정확한 실시간 API로 원상복구
+                    aa = item.get("aa", 0) # API가 제공하는 '원' 단위 순수 거래대금
+                    aq = item.get("aq", 0) 
+                    
                     if close > 0:
+                        if aa > 0:
+                            # 원 단위이므로 1억(100,000,000)으로 정확하게 나눕니다.
+                            vol_str = f"{int(aa // 100000000):,}억"
+                        else:
+                            # 만약 API가 aa를 안 줄 경우를 대비한 안전망
+                            vol_str = f"{int((aq * close) // 100000000):,}억" if aq else "0억"
+
                         prices[name] = {
                             "price": f"{close:,}", 
                             "rate": f"{'+' if chg_type in ['1','2'] else '-' if chg_type in ['5'] else ''}{rate:.2f}%",
                             "type": chg_type, 
-                            "diff": f"{cv:,}"
+                            "diff": f"{cv:,}", 
+                            "volume": vol_str
                         }
         except: pass
     return prices 
@@ -209,15 +206,8 @@ def fetch_live_global_financial_news(stock_name):
     except: return [] 
 
 def get_numeric_score(sname):
-    # 캐시 데이터 오염 방지를 위해 복사본 생성
-    raw_info = realtime_data.get(sname, {"price": "-", "rate": "0.00%", "type": "3", "diff": "0"})
-    info = dict(raw_info) 
-    
-    # 웹 화면에서 크롤링해온 시가총액과 거래대금 주입
-    details = STOCK_DETAILS.get(sname, {"mcap": "-", "volume": "0억"})
-    info["mcap"] = details["mcap"]
-    info["volume"] = details["volume"]
-    
+    info = realtime_data.get(sname, {"price": "-", "rate": "0.00%", "type": "3", "volume": "0억", "diff": "0"})
+    info["mcap"] = MCAP_DATA.get(sname, "-")
     try:
         rate_val = float(info["rate"].replace("%", "").replace("+", ""))
         vol_val = int(info["volume"].replace("억", "").replace(",", ""))
