@@ -106,10 +106,7 @@ def fetch_market_caps(stock_map):
 
             m_sum_tag = soup.select_one("#_market_sum")
             if m_sum_tag:
-                # 1. 네이버가 보여주는 텍스트를 그대로 가져오고, 쓸데없는 띄어쓰기를 정리합니다.
                 val_str = " ".join(m_sum_tag.text.strip().split())
-
-                # 2. 강제 숫자 변환을 없애고, 뒤에 '억'만 붙여서 바로 보여줍니다.
                 if val_str.endswith("조"):
                     cap_str = val_str
                 else:
@@ -131,7 +128,6 @@ def fetch_market_caps(stock_map):
 
 MCAP_DATA = fetch_market_caps(STOCK_MAP)
 
-# ★★★ 여기서부터 거래대금 수정 부분 ★★★
 @st.cache_data(ttl=5)
 def fetch_hts_api_prices(stock_map):
     if not stock_map: return {}
@@ -156,25 +152,23 @@ def fetch_hts_api_prices(stock_map):
                         cv = item.get("cv", 0)
                         aq = item.get("aq", 0)
                         
-                        # --- [수정 완료] 거래대금 네이버와 완벽하게 일치하게 세팅 ---
-                        aa = item.get("aa", 0) # 네이버 실제 누적 거래대금 (단위: 백만원)
-                        
+                        # =========================================================
+                        # ★★★ 거래대금 완벽 수정 (오류 원인: 나누기 수치를 1억으로 교체) ★★★
+                        aa = item.get("aa", 0) 
                         if close > 0:
-                            # aa(백만 단위)가 있으면 정확하게 100으로 나누어 '억' 단위 도출
                             if aa > 0:
-                                vol_str = f"{int(aa) // 100:,}억"
+                                # 네이버 API의 aa는 '1원' 단위이므로 정확히 1억(100,000,000)으로 나누어야 합니다.
+                                vol_str = f"{int(aa) // 100000000:,}억"
                             else:
-                                # 혹시 모를 예외 대비 (기존 로직 백업)
                                 vol_str = f"{int(aq * close / 100000000):,}억" if aq else "0억"
-
+                                
                             prices[name] = {
                                 "price": f"{close:,}", "rate": f"{'+' if chg_type in ['1','2'] else '-' if chg_type in ['5'] else ''}{rate:.2f}%",
                                 "type": chg_type, "diff": f"{cv:,}", "volume": vol_str
                             }
-                        # -----------------------------------------------------------
+                        # =========================================================
         except: pass
     return prices
-# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
 
 realtime_data = fetch_hts_api_prices(STOCK_MAP)
 
