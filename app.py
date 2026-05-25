@@ -4,7 +4,7 @@ from bs4 import BeautifulSoup
 import urllib.parse
 from streamlit_autorefresh import st_autorefresh
 import xml.etree.ElementTree as ET 
-import concurrent.futures  # 병렬 처리를 위한 라이브러리 추가
+import concurrent.futures 
 
 # 1. 페이지 레이아웃 및 다크테마 최적화 세팅
 st.set_page_config(page_title="NXT 자동형 주도주 전광판", layout="wide") 
@@ -24,7 +24,9 @@ body, .stApp, [data-testid="stAppViewContainer"], .main { background-color: #0f1
 .theme-lbl { background-color: #1e3a5f; color: #38bdf8 !important; font-size: 13px; font-weight: bold; padding: 2px 10px; border-radius: 4px; }
 .theme-amt { color: #f43f5e !important; font-size: 13px; font-weight: bold; }
 .theme-desc { color: #94a3b8 !important; font-size: 11px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hts-card { background-color: #1b2636; border: 1px solid #283954; border-radius: 4px; padding: 10px 12px; margin-bottom: 8px; height: 62px; display: flex; flex-direction: column; justify-content: center; cursor: pointer; }
+
+/* [수정] 모바일 화면에서 글씨 뚫고 나가는 현상 방지 (고정높이 제거 및 유연한 여백 적용) */
+.hts-card { background-color: #1b2636; border: 1px solid #283954; border-radius: 4px; padding: 10px 12px; margin-bottom: 8px; min-height: 66px; height: auto; display: flex; flex-direction: column; justify-content: center; cursor: pointer; }
 .hts-card:hover { border: 1px solid #38bdf8; background-color: #223147; }
 .hts-up .status-color { color: #ef4444 !important; }
 .hts-down .status-color { color: #3b82f6 !important; }
@@ -90,25 +92,23 @@ def fetch_dynamic_themes():
 
 theme_data, STOCK_MAP = fetch_dynamic_themes() 
 
-# --- [개선] 시가총액 대량 호출을 병렬 스레드로 가속화 ---
 @st.cache_data(ttl=3600)
 def fetch_market_caps(stock_map):
     caps = {}
     headers = {'User-Agent': 'Mozilla/5.0'}
     
-    # 단건 요청용 내부 함수
     def fetch_single_cap(name, code):
         try:
             url = f"https://m.stock.naver.com/api/stock/{code}/basic"
             res = requests.get(url, headers=headers, timeout=2).json()
-            m_sum = res.get("marketSum", "0")
+            # [수정] 최신 네이버 모바일 API 데이터 주머니(stockResult) 구조 대응 보완
+            m_sum = res.get("marketSum") or res.get("stockResult", {}).get("marketSum", "0")
             val = int(str(m_sum).replace(",", ""))
             cap_str = f"{val/10000:.1f}조" if val >= 10000 else f"{val:,}억"
             return name, cap_str
         except:
             return name, "-"
 
-    # 최대 20개의 스레드를 띄워 병렬로 동시 요청 수행
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
         future_to_stock = {executor.submit(fetch_single_cap, name, code): name for name, code in stock_map.items()}
         for future in concurrent.futures.as_completed(future_to_stock):
@@ -144,11 +144,8 @@ def fetch_hts_api_prices(stock_map):
                         aq = item.get("aq", 0)
                         if close > 0:
                             prices[name] = {
-                                "price": f"{close:,}", 
-                                "rate": f"{'+' if chg_type in ['1','2'] else '-' if chg_type in ['5'] else ''}{rate:.2f}%",
-                                "type": chg_type, 
-                                "diff": f"{cv:,}", 
-                                "volume": f"{int(aq * close / 100000000):,}억" if aq else "0억"
+                                "price": f"{close:,}", "rate": f"{'+' if chg_type in ['1','2'] else '-' if chg_type in ['5'] else ''}{rate:.2f}%",
+                                "type": chg_type, "diff": f"{cv:,}", "volume": f"{int(aq * close / 100000000):,}억" if aq else "0억"
                             }
         except: pass
     return prices 
@@ -267,7 +264,9 @@ if st.session_state.page_mode == "main":
         for idx, (sname, r_val, v_val, s_info) in enumerate(sorted_stocks):
             class_mode = "hts-limit" if s_info["type"] == "1" else "hts-down" if s_info["type"] == "5" or "-" in s_info["rate"] else "hts-up"
             sign = "▲ " if class_mode != "hts-down" else "▼ "
-            cols[idx % 4].markdown(f"<a class='notranslate' href='?stock={sname}' target='_self' style='text-decoration:none; color:inherit;'><div class='hts-card {class_mode}'><div class='hts-row' style='display:flex; justify-content:space-between;'><span class='stock-title' style='color:#ffffff; font-weight:bold; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;'>{sname}</span><span class='status-color' style='font-weight:bold; margin-left:4px;'>{sign}{s_info['rate']}</span></div><div class='hts-sub-row' style='display:flex; justify-content:space-between; margin-top:2px;'><span class='status-color'>{s_info['price']}원</span><div style='text-align:right;'><span style='color:#64748b; font-size:10px;'>{s_info['mcap']}</span> <span style='color:#94a3b8; font-size:10px;'>{s_info['volume']}</span></div></div></div></a>", unsafe_allow_html=True) 
+            
+            # [수정] 모바일 텍스트 정렬을 위해 '시(시가총액)' 및 '거래(거래대금)' 명시적 라벨 인라인 배치
+            cols[idx % 4].markdown(f"<a class='notranslate' href='?stock={sname}' target='_self' style='text-decoration:none; color:inherit;'><div class='hts-card {class_mode}'><div class='hts-row' style='display:flex; justify-content:space-between;'><span class='stock-title' style='color:#ffffff; font-weight:bold; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;'>{sname}</span><span class='status-color' style='font-weight:bold; margin-left:4px;'>{sign}{s_info['rate']}</span></div><div class='hts-sub-row' style='display:flex; justify-content:space-between; margin-top:4px;'><span class='status-color'>{s_info['price']}원</span><div style='text-align:right; font-size:10px;'><span style='color:#94a3b8;'>시 {s_info['mcap']}</span> <span style='color:#cbd5e1;'>| 거래 {s_info['volume']}</span></div></div></div></a>", unsafe_allow_html=True) 
 
 elif st.session_state.page_mode == "detail":
     if st.button("◀ 실시간 랭킹 전광판으로 돌아가기", use_container_width=True): go_main(); st.rerun()
