@@ -92,7 +92,7 @@ def fetch_dynamic_themes():
 
 theme_data, STOCK_MAP = fetch_dynamic_themes() 
 
-# --- [수정] 가장 안정적인 방식으로 시가총액 로직 교체 ---
+# --- [수정] 대형주 '조' 단위 에러 완벽 해결 ---
 @st.cache_data(ttl=3600)
 def fetch_market_caps(stock_map):
     caps = {}
@@ -100,18 +100,20 @@ def fetch_market_caps(stock_map):
     
     def fetch_single_cap(name, code):
         try:
-            # 잦은 구조 변경이 있는 API 대신, 가장 확실한 PC 웹페이지를 직접 스크래핑합니다.
             url = f"https://finance.naver.com/item/main.naver?code={code}"
             res = requests.get(url, headers=headers, timeout=3)
             soup = BeautifulSoup(res.text, 'html.parser')
             
-            # 네이버 금융 '시가총액' 고유 영역 직접 추출 (단위: 억원)
             m_sum_tag = soup.select_one("#_market_sum")
             if m_sum_tag:
-                val_str = m_sum_tag.text.strip().replace(",", "")
-                val = int(val_str)
-                # 10,000억 이상이면 '조' 단위로, 아니면 '억' 단위로 포맷팅
-                cap_str = f"{val/10000:.1f}조" if val >= 10000 else f"{val:,}억"
+                # 1. 네이버가 보여주는 텍스트를 그대로 가져오고, 쓸데없는 띄어쓰기를 정리합니다.
+                val_str = " ".join(m_sum_tag.text.strip().split())
+                
+                # 2. 강제 숫자 변환을 없애고, 뒤에 '억'만 붙여서 바로 보여줍니다.
+                if val_str.endswith("조"):
+                    cap_str = val_str
+                else:
+                    cap_str = f"{val_str}억"
                 return name, cap_str
             else:
                 return name, "-"
