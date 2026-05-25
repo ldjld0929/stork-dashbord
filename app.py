@@ -4,10 +4,10 @@ from bs4 import BeautifulSoup
 import urllib.parse
 from streamlit_autorefresh import st_autorefresh
 import xml.etree.ElementTree as ET
-import concurrent.futures 
+import concurrent.futures
 
 # 1. 페이지 레이아웃 및 다크테마 최적화 세팅
-st.set_page_config(page_title="NXT 자동형 주도주 전광판", layout="wide") 
+st.set_page_config(page_title="NXT 자동형 주도주 전광판", layout="wide")
 
 # [모바일 가독성, 강제 번역 차단, 배경색 강제 고정 및 CSS 텍스트 노출 방지]
 st.markdown("""
@@ -23,7 +23,7 @@ body, .stApp, [data-testid="stAppViewContainer"], .main { background-color: #0f1
 .theme-top { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; }
 .theme-lbl { background-color: #1e3a5f; color: #38bdf8 !important; font-size: 13px; font-weight: bold; padding: 2px 10px; border-radius: 4px; }
 .theme-amt { color: #f43f5e !important; font-size: 13px; font-weight: bold; }
-.theme-desc { color: #94a3b8 !important; font-size: 11px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } 
+.theme-desc { color: #94a3b8 !important; font-size: 11px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* 모바일 화면에서 글씨 뚫고 나가는 현상 방지 (고정높이 제거 및 유연한 여백 적용) */
 .hts-card { background-color: #1b2636; border: 1px solid #283954; border-radius: 4px; padding: 10px 12px; margin-bottom: 8px; min-height: 66px; height: auto; display: flex; flex-direction: column; justify-content: center; cursor: pointer; }
@@ -39,24 +39,21 @@ body, .stApp, [data-testid="stAppViewContainer"], .main { background-color: #0f1
 .rank-card { background-color: #1e293b; border-left: 3px solid #38bdf8; padding: 8px 12px; border-radius: 4px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
 .rank-num { color: #38bdf8; font-weight: bold; margin-right: 10px; }
 </style>
-""", unsafe_allow_html=True) 
+""", unsafe_allow_html=True)
 
-st_autorefresh(interval=5000, key="hts_refresh") 
+st_autorefresh(interval=5000, key="hts_refresh")
 
 @st.cache_data(ttl=600)
 def fetch_dynamic_themes():
     url = "https://finance.naver.com/sise/theme.naver"
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8'
-    }
+    headers = {'User-Agent': 'Mozilla/5.0'}
     dynamic_theme_data = {}
-    dynamic_stock_map = {} 
+    dynamic_stock_map = {}
 
     try:
-        res = requests.get(url, headers=headers, timeout=10)
+        res = requests.get(url, headers=headers, timeout=5)
         res.encoding = 'euc-kr'
-        soup = BeautifulSoup(res.text, 'html.parser') 
+        soup = BeautifulSoup(res.text, 'html.parser')
 
         themes = []
         for tr in soup.select('table.type_1 tr'):
@@ -67,12 +64,12 @@ def fetch_dynamic_themes():
                 theme_name = a_tag.text.strip()
                 theme_link = "https://finance.naver.com" + a_tag['href']
                 themes.append({'name': theme_name, 'link': theme_link})
-                if len(themes) >= 8: break 
+                if len(themes) >= 8: break
 
         for t in themes:
-            res_t = requests.get(t['link'], headers=headers, timeout=10)
+            res_t = requests.get(t['link'], headers=headers, timeout=5)
             res_t.encoding = 'euc-kr'
-            soup_t = BeautifulSoup(res_t.text, 'html.parser') 
+            soup_t = BeautifulSoup(res_t.text, 'html.parser')
 
             stocks = []
             for tr in soup_t.select('table.type_5 tr'):
@@ -83,7 +80,7 @@ def fetch_dynamic_themes():
                         s_name = a_tag.text.replace("*", "").strip()
                         s_code = a_tag['href'].split('code=')[-1][:6]
                         stocks.append(s_name)
-                        dynamic_stock_map[s_name] = s_code 
+                        dynamic_stock_map[s_name] = s_code
 
             dynamic_theme_data[t['name']] = {
                 "news": f"🚀 {t['name']} 섹터 집중 분석",
@@ -91,25 +88,24 @@ def fetch_dynamic_themes():
             }
         return dynamic_theme_data, dynamic_stock_map
     except Exception as e:
-        return {"시스템 안내": {"news": "일시적인 로딩 지연...", "stocks": ["삼성전자"]}}, {"삼성전자": "005930"} 
+        return {"시스템 안내": {"news": "데이터 로딩 중...", "stocks": ["삼성전자"]}}, {"삼성전자": "005930"}
 
-theme_data, STOCK_MAP = fetch_dynamic_themes() 
+theme_data, STOCK_MAP = fetch_dynamic_themes()
 
 @st.cache_data(ttl=3600)
 def fetch_market_caps(stock_map):
     caps = {}
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36'} 
+    headers = {'User-Agent': 'Mozilla/5.0'}
 
     def fetch_single_cap(name, code):
         try:
             url = f"https://finance.naver.com/item/main.naver?code={code}"
-            res = requests.get(url, headers=headers, timeout=5)
-            soup = BeautifulSoup(res.text, 'html.parser') 
+            res = requests.get(url, headers=headers, timeout=3)
+            soup = BeautifulSoup(res.text, 'html.parser')
 
-            # 시가총액은 고정 텍스트라 스크래핑으로 완벽하게 가져옵니다.
             m_sum_tag = soup.select_one("#_market_sum")
             if m_sum_tag:
-                val_str = " ".join(m_sum_tag.text.strip().split()) 
+                val_str = " ".join(m_sum_tag.text.strip().split())
                 if val_str.endswith("조"):
                     cap_str = val_str
                 else:
@@ -118,71 +114,71 @@ def fetch_market_caps(stock_map):
             else:
                 return name, "-"
         except:
-            return name, "-" 
+            return name, "-"
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
         future_to_stock = {executor.submit(fetch_single_cap, name, code): name for name, code in stock_map.items()}
         for future in concurrent.futures.as_completed(future_to_stock):
             name, cap_str = future.result()
-            caps[name] = cap_str 
+            caps[name] = cap_str
 
     return caps
 
-MCAP_DATA = fetch_market_caps(STOCK_MAP) 
+MCAP_DATA = fetch_market_caps(STOCK_MAP)
 
+# [수정됨] 네이버 API 거래대금 데이터(aa)를 활용하도록 로직 전면 수정
 @st.cache_data(ttl=5)
 def fetch_hts_api_prices(stock_map):
     if not stock_map: return {}
     codes = list(stock_map.values())
     prices = {}
     chunk_size = 20
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36'}
+    
     for i in range(0, len(codes), chunk_size):
         chunk = codes[i:i+chunk_size]
         codes_str = ",".join(chunk)
         url = f"https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:{codes_str}"
+        
         try:
-            res = requests.get(url, headers=headers, timeout=5).json()
+            res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3).json()
             for area in res.get("result", {}).get("areas", []):
                 for item in area.get("datas", []):
                     code = item.get("cd")
                     name = [k for k, v in stock_map.items() if v == code]
+                    
                     if name:
                         name = name[0]
-                    close = item.get("nv", 0)
-                    chg_type = item.get("rf")
-                    rate = item.get("cr", 0.0)
-                    cv = item.get("cv", 0)
-                    
-                    # 🔥 [0원 에러 완벽 해결] 에러 났던 스크래핑 버리고 가장 정확한 실시간 API로 원상복구
-                    aa = item.get("aa", 0) # API가 제공하는 '원' 단위 순수 거래대금
-                    aq = item.get("aq", 0) 
-                    
-                    if close > 0:
-                        if aa > 0:
-                            # 원 단위이므로 1억(100,000,000)으로 정확하게 나눕니다.
-                            vol_str = f"{int(aa // 100000000):,}억"
-                        else:
-                            # 만약 API가 aa를 안 줄 경우를 대비한 안전망
-                            vol_str = f"{int((aq * close) // 100000000):,}억" if aq else "0억"
+                        close = item.get("nv", 0)       # 현재가
+                        chg_type = item.get("rf", "3")  # 등락구분
+                        rate = item.get("cr", 0.0)      # 등락률
+                        cv = item.get("cv", 0)          # 전일대비
+                        
+                        # 핵심 수정: 네이버에서 제공하는 '진짜' 누적 거래대금 (원 단위)
+                        aa = item.get("aa", 0)
+                        
+                        if close > 0:
+                            # 1(상한), 2(상승), 4(하한), 5(하락) 부호 처리
+                            sign = "+" if str(chg_type) in ["1", "2"] else "-" if str(chg_type) in ["4", "5"] else ""
+                            prices[name] = {
+                                "price": f"{close:,}", 
+                                "rate": f"{sign}{rate:.2f}%",
+                                "type": str(chg_type), 
+                                "diff": f"{cv:,}", 
+                                # 거래대금(aa)을 1억 단위로 깔끔하게 절사
+                                "volume": f"{int(aa // 100000000):,}억" if aa else "0억"
+                            }
+        except: 
+            pass
+            
+    return prices
 
-                        prices[name] = {
-                            "price": f"{close:,}", 
-                            "rate": f"{'+' if chg_type in ['1','2'] else '-' if chg_type in ['5'] else ''}{rate:.2f}%",
-                            "type": chg_type, 
-                            "diff": f"{cv:,}", 
-                            "volume": vol_str
-                        }
-        except: pass
-    return prices 
-
-realtime_data = fetch_hts_api_prices(STOCK_MAP) 
+realtime_data = fetch_hts_api_prices(STOCK_MAP)
 
 @st.cache_data(ttl=300)
 def fetch_live_global_financial_news(stock_name):
     encoded_name = urllib.parse.quote(stock_name)
     url = f"https://news.google.com/rss/search?q={encoded_name}+-site:hankyung.com+-site:sedaily.com&hl=ko&gl=KR&ceid=KR:ko"
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36'}
+    headers = {'User-Agent': 'Mozilla/5.0'}
     news_list = []
     try:
         res = requests.get(url, headers=headers, timeout=5)
@@ -203,7 +199,7 @@ def fetch_live_global_financial_news(stock_name):
             news_list.append({"title": title, "link": link, "source": source, "desc": desc_text})
             if len(news_list) >= 5: break
         return news_list
-    except: return [] 
+    except: return []
 
 def get_numeric_score(sname):
     info = realtime_data.get(sname, {"price": "-", "rate": "0.00%", "type": "3", "volume": "0억", "diff": "0"})
@@ -214,25 +210,25 @@ def get_numeric_score(sname):
     except:
         rate_val = 0.0
         vol_val = 0
-    return rate_val, vol_val, info 
+    return rate_val, vol_val, info
 
 all_stocks_data = []
-processed_themes = {} 
+processed_themes = {}
 
 for t_name, t_val in theme_data.items():
     total_vol = 0
     sum_rate = 0.0
-    stock_list_with_score = [] 
+    stock_list_with_score = []
 
     for sname in t_val["stocks"]:
         r_val, v_val, info = get_numeric_score(sname)
         total_vol += v_val
         sum_rate += r_val
         stock_list_with_score.append((sname, r_val, v_val, info))
-        all_stocks_data.append((sname, r_val, v_val, info)) 
+        all_stocks_data.append((sname, r_val, v_val, info))
 
     valid_stocks = len(t_val["stocks"])
-    avg_rate = sum_rate / valid_stocks if valid_stocks > 0 else 0.0 
+    avg_rate = sum_rate / valid_stocks if valid_stocks > 0 else 0.0
 
     processed_themes[t_name] = {
         "money": f"{total_vol:,}억",
@@ -240,24 +236,24 @@ for t_name, t_val in theme_data.items():
         "stocks_data": stock_list_with_score,
         "total_vol": total_vol,
         "avg_rate": avg_rate
-    } 
+    }
 
 sorted_theme_names = sorted(processed_themes.keys(), key=lambda x: (processed_themes[x]["avg_rate"], processed_themes[x]["total_vol"]), reverse=True)
 top_rate_stocks = sorted(all_stocks_data, key=lambda x: x[1], reverse=True)[:5] if all_stocks_data else []
-top_vol_stocks = sorted(all_stocks_data, key=lambda x: x[2], reverse=True)[:5] if all_stocks_data else [] 
+top_vol_stocks = sorted(all_stocks_data, key=lambda x: x[2], reverse=True)[:5] if all_stocks_data else []
 
 if "page_mode" not in st.session_state: st.session_state.page_mode = "main"
-if "active_stock" not in st.session_state: st.session_state.active_stock = None 
+if "active_stock" not in st.session_state: st.session_state.active_stock = None
 
 query_params = st.query_params
 if "stock" in query_params and query_params["stock"]:
     st.session_state.active_stock = query_params["stock"]
     st.session_state.page_mode = "detail"
-    st.query_params.clear() 
+    st.query_params.clear()
 
 def go_main():
     st.session_state.page_mode = "main"
-    st.session_state.active_stock = None 
+    st.session_state.active_stock = None
 
 if st.session_state.page_mode == "main":
     st.markdown("<h3 class='notranslate' style='margin:0 0 15px 0; color:#38bdf8;'>📱 실시간 주도주 랭킹 통합 전광판 (Full 집계)</h3>", unsafe_allow_html=True)
@@ -267,7 +263,9 @@ if st.session_state.page_mode == "main":
         st.session_state.active_stock = selected_search
         st.session_state.page_mode = "detail"
         st.rerun()
+        
     st.markdown("<hr style='border-color: #334155; margin: 15px 0;'>", unsafe_allow_html=True)
+    
     col1, col2 = st.columns(2)
     with col1:
         st.markdown("<h4 style='color:#ffffff; font-size:16px;'>🔥 현재 장중 급등 Top 5</h4>", unsafe_allow_html=True)
@@ -277,31 +275,39 @@ if st.session_state.page_mode == "main":
     with col2:
         st.markdown("<h4 style='color:#ffffff; font-size:16px;'>💰 현재 거래대금 Top 5</h4>", unsafe_allow_html=True)
         for idx, (sname, r_val, v_val, s_info) in enumerate(top_vol_stocks):
-            st.markdown(f"<div class='rank-card notranslate' style='border-left-color: #eab308;'><div><span class='rank-num'>{idx+1}</span><span style='color:white; font-weight:bold;'>{sname}</span></div><div style='color:#eab308; font-weight:bold;'>{s_info['volume']}</div></div>", unsafe_allow_html=True) 
+            st.markdown(f"<div class='rank-card notranslate' style='border-left-color: #eab308;'><div><span class='rank-num'>{idx+1}</span><span style='color:white; font-weight:bold;'>{sname}</span></div><div style='color:#eab308; font-weight:bold;'>{s_info['volume']}</div></div>", unsafe_allow_html=True)
 
     st.markdown("<hr style='border-color: #334155; margin: 15px 0;'>", unsafe_allow_html=True)
+    
     for t_name in sorted_theme_names:
         t_val = processed_themes[t_name]
         avg_str = f"+{t_val['avg_rate']:.2f}%" if t_val['avg_rate'] > 0 else f"{t_val['avg_rate']:.2f}%"
         avg_color = "#ef4444" if t_val['avg_rate'] > 0 else "#3b82f6" if t_val['avg_rate'] < 0 else "#94a3b8"
+        
         st.markdown(f'''<div class="theme-box notranslate"><div class="theme-top"><span class="theme-lbl">{t_name} (섹터순위)</span><div style="text-align: right;"><span style="color: {avg_color} !important; font-size: 13px; font-weight: bold; margin-right: 8px;">평균 {avg_str}</span><span class="theme-amt">합산 {t_val["money"]}</span></div></div><div class="theme-desc">{t_val["news"]}</div></div>''', unsafe_allow_html=True)
+        
         cols = st.columns(4)
         sorted_stocks = sorted(t_val["stocks_data"], key=lambda x: x[1], reverse=True)
         for idx, (sname, r_val, v_val, s_info) in enumerate(sorted_stocks):
             class_mode = "hts-limit" if s_info["type"] == "1" else "hts-down" if s_info["type"] == "5" or "-" in s_info["rate"] else "hts-up"
-            sign = "▲ " if class_mode != "hts-down" else "▼ " 
-
-            cols[idx % 4].markdown(f"<a class='notranslate' href='?stock={sname}' target='_self' style='text-decoration:none; color:inherit;'><div class='hts-card {class_mode}'><div class='hts-row' style='display:flex; justify-content:space-between;'><span class='stock-title' style='color:#ffffff; font-weight:bold; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;'>{sname}</span><span class='status-color' style='font-weight:bold; margin-left:4px;'>{sign}{s_info['rate']}</span></div><div class='hts-sub-row' style='display:flex; justify-content:space-between; margin-top:4px;'><span class='status-color'>{s_info['price']}원</span><div style='text-align:right; font-size:10px;'><span style='color:#94a3b8;'>시 {s_info['mcap']}</span> <span style='color:#cbd5e1;'>| 거래 {s_info['volume']}</span></div></div></div></a>", unsafe_allow_html=True) 
+            sign = "▲ " if class_mode != "hts-down" else "▼ "
+            
+            cols[idx % 4].markdown(f"<a class='notranslate' href='?stock={sname}' target='_self' style='text-decoration:none; color:inherit;'><div class='hts-card {class_mode}'><div class='hts-row' style='display:flex; justify-content:space-between;'><span class='stock-title' style='color:#ffffff; font-weight:bold; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;'>{sname}</span><span class='status-color' style='font-weight:bold; margin-left:4px;'>{sign}{s_info['rate']}</span></div><div class='hts-sub-row' style='display:flex; justify-content:space-between; margin-top:4px;'><span class='status-color'>{s_info['price']}원</span><div style='text-align:right; font-size:10px;'><span style='color:#94a3b8;'>시 {s_info['mcap']}</span> <span style='color:#cbd5e1;'>| 거래 {s_info['volume']}</span></div></div></div></a>", unsafe_allow_html=True)
 
 elif st.session_state.page_mode == "detail":
-    if st.button("◀ 실시간 랭킹 전광판으로 돌아가기", use_container_width=True): go_main(); st.rerun()
+    if st.button("◀ 실시간 랭킹 전광판으로 돌아가기", use_container_width=True): 
+        go_main()
+        st.rerun()
+        
     tgt = st.session_state.active_stock
     tgt_code = STOCK_MAP.get(tgt, "005930")
     _, _, live = get_numeric_score(tgt)
     mode_color = "#eab308" if live["type"] == "1" else "#ef4444" if live["type"] in ["2","1"] and "-" not in live["rate"] else "#3b82f6"
+    
     st.markdown(f"""<div class="detail-card notranslate"><div style="display:flex; justify-content:space-between; align-items:center;"><span style="font-size:22px; font-weight:bold; color:#f8fafc;">⭐ {tgt}</span><span style="color:#64748b; font-size:14px;">(코드 {tgt_code})</span></div><div style="margin: 10px 0; font-size:26px; font-weight:bold; color:{mode_color};">{live["price"]} <span style="font-size:15px; color:#cbd5e1;">({live["rate"]})</span><span style="float:right; font-size:13px; color:#94a3b8; margin-top:10px;">시총 {live["mcap"]} | 거래대금 {live["volume"]}</span></div></div>""", unsafe_allow_html=True)
+    
     st.markdown("<p style='font-size:15px; font-weight:bold; color:#38bdf8; margin-top:5px;'>🔥 실시간 뉴스 피드</p>", unsafe_allow_html=True)
     for nw in fetch_live_global_financial_news(tgt):
         with st.expander(f"📌 [{nw['source']}] {nw['title']}"):
             st.markdown(f"<p style='color:#cbd5e1; font-size:13px; line-height:1.6;'>{nw['desc']}</p>", unsafe_allow_html=True)
-        st.link_button("🔗 원문 보기", nw['link'])
+            st.link_button("🔗 원문 보기", nw['link'])
