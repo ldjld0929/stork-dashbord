@@ -43,13 +43,17 @@ body, .stApp, [data-testid="stAppViewContainer"], .main { background-color: #0f1
 
 st_autorefresh(interval=5000, key="hts_refresh") 
 
-@st.cache_data(ttl=600)
-def fetch_dynamic_themes():
+# 💡 [핵심 변경] 오차 없는 네이버 웹보드 원본 데이터를 5초마다 초고속 병렬 스크래핑하는 통합 함수
+@st.cache_data(ttl=5)
+def fetch_all_consolidated_data():
     url = "https://finance.naver.com/sise/theme.naver"
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    dynamic_theme_data = {}
-    dynamic_stock_map = {} 
-
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+    
+    theme_data = {}
+    stock_map = {}
+    mcap_data = {}
+    realtime_data = {}
+    
     try:
         res = requests.get(url, headers=headers, timeout=5)
         res.encoding = 'euc-kr'
@@ -66,132 +70,99 @@ def fetch_dynamic_themes():
                 themes.append({'name': theme_name, 'link': theme_link})
                 if len(themes) >= 8: break 
 
-        for t in themes:
-            res_t = requests.get(t['link'], headers=headers, timeout=5)
-            res_t.encoding = 'euc-kr'
-            soup_t = BeautifulSoup(res_t.text, 'html.parser') 
-
-            stocks = []
-            for tr in soup_t.select('table.type_5 tr'):
-                name_td = tr.select_one('td.name')
-                if name_td:
-                    a_tag = name_td.select_one('a')
-                    if a_tag:
+        def parse_theme_detail(t):
+            stocks_list = []
+            try:
+                res_t = requests.get(t['link'], headers=headers, timeout=5)
+                res_t.encoding = 'euc-kr'
+                soup_t = BeautifulSoup(res_t.text, 'html.parser') 
+                
+                for tr in soup_t.select('table.type_5 tr'):
+                    tds = tr.select('td')
+                    name_td = tr.select_one('td.name')
+                    if name_td and len(tds) >= 9:
+                        a_tag = name_td.select_one('a')
+                        if not a_tag: continue
                         s_name = a_tag.text.replace("*", "").strip()
                         s_code = a_tag['href'].split('code=')[-1][:6]
-                        stocks.append(s_name)
-                        dynamic_stock_map[s_name] = s_code 
+                        
+                        idx = tds.index(name_td)
+                        
+                        # 1. 현재가 추출
+                        price_raw = tds[idx+1].text.strip().replace(',', '')
+                        price_val = int(price_raw) if price_raw.isdigit() else 0
+                        
+                        # 2. 전일대비 추출
+                        diff_raw = tds[idx+2].text.strip()
+                        diff_clean = "".join([c for c in diff_raw if c.isdigit() or c == ','])
+                        if not diff_clean: diff_clean = "0"
+                        
+                        # 3. 등락률 추출 및 음수/양수 판단
+                        rate_raw = tds[idx+3].text.strip().replace('%', '').replace('+', '').replace('-', '').strip()
+                        rate_val = float(rate_raw) if rate_raw else 0.0
+                        if '-' in tds[idx+3].text or '▼' in tds[idx+3].text or 'nv01' in str(tds[idx+3]):
+                            rate_val = -rate_val
+                            
+                        chg_type = "3"
+                        if rate_val > 0:
+                            chg_type = "2"
+                            if rate_val >= 29.5: # 상한가 감지 기믹
+                                chg_type = "1"
+                        elif rate_val < 0:
+                            chg_type = "5"
+                            
+                        # 4. 진짜 총거래대금 (백만 단위 -> 억 단위 변환)
+                        vol_raw = tds[idx+5].text.strip().replace(',', '')
+                        if vol_raw.isdigit():
+                            vol_mil = int(vol_raw)
+                            vol_bni = int(vol_mil / 100) # 100백만 = 1억
+                            volume_display = f"{vol_bni:,}억"
+                        else:
+                            volume_display = "0억"
+                            
+                        # 5. 진짜 시가총액 (억 단위 -> 조/억 변환)
+                        mcap_raw = tds[idx+8].text.strip().replace(',', '')
+                        if mcap_raw.isdigit():
+                            mcap_val = int(mcap_raw)
+                            if mcap_val >= 10000:
+                                mcap_display = f"{mcap_val // 10000}조 {mcap_val % 10000}억"
+                            else:
+                                mcap_display = f"{mcap_val}억"
+                        else:
+                            mcap_display = "-"
+                            
+                        t_stocks.append({
+                            "name": s_name, "code": s_code, "price": f"{price_val:,}",
+                            "rate": f"{'+' if rate_val > 0 else ''}{rate_val:.2f}%",
+                            "type": chg_type, "diff": diff_clean, "volume": volume_display, "mcap": mcap_display
+                        })
+            except:
+                pass
+            return t['name'], t_stocks
 
-            dynamic_theme_data[t['name']] = {
-                "news": f"🚀 {t['name']} 섹터 집중 분석",
-                "stocks": stocks
+        with concurrent.futures.ThreadPoolExecutor(max_workers=8) as executor:
+            results = executor.map(parse_theme_detail, themes)
+            
+        for t_name, stocks in results:
+            theme_data[t_name] = {
+                "news": f"🚀 {t_name} 섹터 집중 분석",
+                "stocks": [s["name"] for s in stocks]
             }
-        return dynamic_theme_data, dynamic_stock_map
+            for s in stocks:
+                stock_map[s["name"]] = s["code"]
+                mcap_data[s["name"]] = s["mcap"]
+                realtime_data[s["name"]] = {
+                    "price": s["price"], "rate": s["rate"], "type": s["type"],
+                    "diff": s["diff"], "volume": s["volume"]
+                }
+                
     except Exception as e:
-        return {"시스템 안내": {"news": "데이터 로딩 중...", "stocks": ["삼성전자"]}}, {"삼성전자": "005930"} 
+        return {}, {}, {}, {}
+        
+    return theme_data, stock_map, mcap_data, realtime_data
 
-theme_data, STOCK_MAP = fetch_dynamic_themes() 
-
-@st.cache_data(ttl=3600)
-def fetch_market_caps(stock_map):
-    caps = {}
-    headers = {'User-Agent': 'Mozilla/5.0'} 
-
-    def fetch_single_cap(name, code):
-        try:
-            url = f"https://finance.naver.com/item/main.naver?code={code}"
-            res = requests.get(url, headers=headers, timeout=3)
-            soup = BeautifulSoup(res.text, 'html.parser') 
-
-            m_sum_tag = soup.select_one("#_market_sum")
-            if m_sum_tag:
-                val_str = " ".join(m_sum_tag.text.strip().split()) 
-                if val_str.endswith("조"):
-                    cap_str = val_str
-                else:
-                    cap_str = f"{val_str}억"
-                return name, cap_str
-            else:
-                return name, "-"
-        except:
-            return name, "-" 
-
-    with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        future_to_stock = {executor.submit(fetch_single_cap, name, code): name for name, code in stock_map.items()}
-        for future in concurrent.futures.as_completed(future_to_stock):
-            name, cap_str = future.result()
-            caps[name] = cap_str 
-
-    return caps
-
-MCAP_DATA = fetch_market_caps(STOCK_MAP) 
-
-@st.cache_data(ttl=5)
-def fetch_hts_api_prices(stock_map):
-    if not stock_map: return {}
-    codes = list(stock_map.values())
-    prices = {}
-    chunk_size = 20
-    for i in range(0, len(codes), chunk_size):
-        chunk = codes[i:i+chunk_size]
-        codes_str = ",".join(chunk)
-        url = f"https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:{codes_str}"
-        try:
-            res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3).json()
-            for area in res.get("result", {}).get("areas", []):
-                for item in area.get("datas", []):
-                    code = item.get("cd")
-                    name = [k for k, v in stock_map.items() if v == code]
-                    if name:
-                        name = name[0]
-                        close = item.get("nv", 0)
-                        chg_type = item.get("rf")
-                        rate = item.get("cr", 0.0)
-                        cv = item.get("cv", 0)
-                        
-                        # 💡 네이버 실시간 API가 제공하는 누적 거래대금 필드(aa) 사용
-                        aa = item.get("aa", 0) 
-                        
-                        if close > 0:
-                            prices[name] = {
-                                "price": f"{close:,}", 
-                                "rate": f"{'+' if chg_type in ['1','2'] else '-' if chg_type in ['5'] else ''}{rate:.2f}%",
-                                "type": chg_type, 
-                                "diff": f"{cv:,}", 
-                                # 💡 임의 계산을 지우고, 실제 누적 거래대금을 억 단위로 가공
-                                "volume": f"{int(aa / 100000000):,}억" if aa else "0억"
-                            }
-        except: pass
-    return prices 
-
-realtime_data = fetch_hts_api_prices(STOCK_MAP) 
-
-@st.cache_data(ttl=300)
-def fetch_live_global_financial_news(stock_name):
-    encoded_name = urllib.parse.quote(stock_name)
-    url = f"https://news.google.com/rss/search?q={encoded_name}+-site:hankyung.com+-site:sedaily.com&hl=ko&gl=KR&ceid=KR:ko"
-    headers = {'User-Agent': 'Mozilla/5.0'}
-    news_list = []
-    try:
-        res = requests.get(url, headers=headers, timeout=5)
-        root = ET.fromstring(res.content)
-        for item in root.findall('.//item'):
-            title = item.find('title').text if item.find('title') is not None else ""
-            link = item.find('link').text if item.find('link') is not None else ""
-            if any(k in title for k in ["유료", "로그인", "회원전용", "구독"]): continue
-            if "hankyung.com" in link or "sedaily.com" in link: continue
-            source = item.find('source').text if item.find('source') is not None else "경제속보"
-            desc_text = "기사 요약 내용을 불러오는 중입니다."
-            desc_elem = item.find('description')
-            if desc_elem is not None and desc_elem.text:
-                raw_desc = desc_elem.text
-                desc_soup = BeautifulSoup(raw_desc, 'html.parser')
-                desc_text = desc_soup.get_text(strip=True)[:150] + "..."
-            if " - " in title: title = title.rsplit(" - ", 1)[0]
-            news_list.append({"title": title, "link": link, "source": source, "desc": desc_text})
-            if len(news_list) >= 5: break
-        return news_list
-    except: return [] 
+# 원본 구조와 완벽히 대응되도록 일괄 할당
+theme_data, STOCK_MAP, MCAP_DATA, realtime_data = fetch_all_consolidated_data()
 
 def get_numeric_score(sname):
     info = realtime_data.get(sname, {"price": "-", "rate": "0.00%", "type": "3", "volume": "0억", "diff": "0"})
@@ -230,9 +201,44 @@ for t_name, t_val in theme_data.items():
         "avg_rate": avg_rate
     } 
 
+# 전역 중복 제거 및 정렬
+seen = set()
+unique_stocks_data = []
+for item in all_stocks_data:
+    if item[0] not in seen:
+        seen.add(item[0])
+        unique_stocks_data.append(item)
+
 sorted_theme_names = sorted(processed_themes.keys(), key=lambda x: (processed_themes[x]["avg_rate"], processed_themes[x]["total_vol"]), reverse=True)
-top_rate_stocks = sorted(all_stocks_data, key=lambda x: x[1], reverse=True)[:5] if all_stocks_data else []
-top_vol_stocks = sorted(all_stocks_data, key=lambda x: x[2], reverse=True)[:5] if all_stocks_data else [] 
+top_rate_stocks = sorted(unique_stocks_data, key=lambda x: x[1], reverse=True)[:5] if unique_stocks_data else []
+top_vol_stocks = sorted(unique_stocks_data, key=lambda x: x[2], reverse=True)[:5] if unique_stocks_data else [] 
+
+@st.cache_data(ttl=300)
+def fetch_live_global_financial_news(stock_name):
+    encoded_name = urllib.parse.quote(stock_name)
+    url = f"https://news.google.com/rss/search?q={encoded_name}+-site:hankyung.com+-site:sedaily.com&hl=ko&gl=KR&ceid=KR:ko"
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    news_list = []
+    try:
+        res = requests.get(url, headers=headers, timeout=5)
+        root = ET.fromstring(res.content)
+        for item in root.findall('.//item'):
+            title = item.find('title').text if item.find('title') is not None else ""
+            link = item.find('link').text if item.find('link') is not None else ""
+            if any(k in title for k in ["유료", "로그인", "회원전용", "구독"]): continue
+            if "hankyung.com" in link or "sedaily.com" in link: continue
+            source = item.find('source').text if item.find('source') is not None else "경제속보"
+            desc_text = "기사 요약 내용을 불러오는 중입니다."
+            desc_elem = item.find('description')
+            if desc_elem is not None and desc_elem.text:
+                raw_desc = desc_elem.text
+                desc_soup = BeautifulSoup(raw_desc, 'html.parser')
+                desc_text = desc_soup.get_text(strip=True)[:150] + "..."
+            if " - " in title: title = title.rsplit(" - ", 1)[0]
+            news_list.append({"title": title, "link": link, "source": source, "desc": desc_text})
+            if len(news_list) >= 5: break
+        return news_list
+    except: return [] 
 
 if "page_mode" not in st.session_state: st.session_state.page_mode = "main"
 if "active_stock" not in st.session_state: st.session_state.active_stock = None 
@@ -289,7 +295,7 @@ elif st.session_state.page_mode == "detail":
     tgt_code = STOCK_MAP.get(tgt, "005930")
     _, _, live = get_numeric_score(tgt)
     mode_color = "#eab308" if live["type"] == "1" else "#ef4444" if live["type"] in ["2","1"] and "-" not in live["rate"] else "#3b82f6"
-    st.markdown(f"""<div class="detail-card notranslate"><div style="display:flex; justify-content:space-between; align-items:center;"><span style="font-size:22px; font-weight:bold; color:#f8fafc;">⭐ {tgt}</span><span style="color:#64748b; font-size:14px;">(코드 {tgt_code})</span></div><div style="margin: 10px 0; font-size:26px; font-weight:bold; color:{mode_color};">{live["price"]} <span style="font-size:15px; color:#cbd5e1;">({live["rate"]})</span><span style="float:right; font-size:13px; color:#94a3b8; margin-top:10px;">시총 {live["mcap"]} | 거래대금 {live["volume"]}</span></div></div>""", unsafe_allow_html=True)
+    st.markdown(f"""<div class="detail-card notranslate"><div style="display:flex; justify-content:space-between; align-items:center;"><span style="font-size:22px; font-weight:bold; color:#f8fafc;">⭐ {tgt}</span><span style="color:#64748b; font-size:14px;">(코드 {tgt_code})</span></div><div style="margin: 10px 0; font-size:26px; font-weight:bold; color:{mode_color};">{live["price"]}원 <span style="font-size:15px; color:#cbd5e1;">({live["rate"]})</span><span style="float:right; font-size:13px; color:#94a3b8; margin-top:10px;">시총 {live["mcap"]} | 거래대금 {live["volume"]}</span></div></div>""", unsafe_allow_html=True)
     st.markdown("<p style='font-size:15px; font-weight:bold; color:#38bdf8; margin-top:5px;'>🔥 실시간 뉴스 피드</p>", unsafe_allow_html=True)
     for nw in fetch_live_global_financial_news(tgt):
         with st.expander(f"📌 [{nw['source']}] {nw['title']}"):
