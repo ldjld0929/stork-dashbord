@@ -25,7 +25,7 @@ body, .stApp, [data-testid="stAppViewContainer"], .main { background-color: #0f1
 .theme-amt { color: #f43f5e !important; font-size: 13px; font-weight: bold; }
 .theme-desc { color: #94a3b8 !important; font-size: 11px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* [수정] 모바일 화면에서 글씨 뚫고 나가는 현상 방지 (고정높이 제거 및 유연한 여백 적용) */
+/* 모바일 화면에서 글씨 뚫고 나가는 현상 방지 (고정높이 제거 및 유연한 여백 적용) */
 .hts-card { background-color: #1b2636; border: 1px solid #283954; border-radius: 4px; padding: 10px 12px; margin-bottom: 8px; min-height: 66px; height: auto; display: flex; flex-direction: column; justify-content: center; cursor: pointer; }
 .hts-card:hover { border: 1px solid #38bdf8; background-color: #223147; }
 .hts-up .status-color { color: #ef4444 !important; }
@@ -92,6 +92,7 @@ def fetch_dynamic_themes():
 
 theme_data, STOCK_MAP = fetch_dynamic_themes() 
 
+# --- [수정] 가장 안정적인 방식으로 시가총액 로직 교체 ---
 @st.cache_data(ttl=3600)
 def fetch_market_caps(stock_map):
     caps = {}
@@ -99,13 +100,21 @@ def fetch_market_caps(stock_map):
     
     def fetch_single_cap(name, code):
         try:
-            url = f"https://m.stock.naver.com/api/stock/{code}/basic"
-            res = requests.get(url, headers=headers, timeout=2).json()
-            # [수정] 최신 네이버 모바일 API 데이터 주머니(stockResult) 구조 대응 보완
-            m_sum = res.get("marketSum") or res.get("stockResult", {}).get("marketSum", "0")
-            val = int(str(m_sum).replace(",", ""))
-            cap_str = f"{val/10000:.1f}조" if val >= 10000 else f"{val:,}억"
-            return name, cap_str
+            # 잦은 구조 변경이 있는 API 대신, 가장 확실한 PC 웹페이지를 직접 스크래핑합니다.
+            url = f"https://finance.naver.com/item/main.naver?code={code}"
+            res = requests.get(url, headers=headers, timeout=3)
+            soup = BeautifulSoup(res.text, 'html.parser')
+            
+            # 네이버 금융 '시가총액' 고유 영역 직접 추출 (단위: 억원)
+            m_sum_tag = soup.select_one("#_market_sum")
+            if m_sum_tag:
+                val_str = m_sum_tag.text.strip().replace(",", "")
+                val = int(val_str)
+                # 10,000억 이상이면 '조' 단위로, 아니면 '억' 단위로 포맷팅
+                cap_str = f"{val/10000:.1f}조" if val >= 10000 else f"{val:,}억"
+                return name, cap_str
+            else:
+                return name, "-"
         except:
             return name, "-"
 
@@ -116,6 +125,7 @@ def fetch_market_caps(stock_map):
             caps[name] = cap_str
             
     return caps 
+# -----------------------------------------------------
 
 MCAP_DATA = fetch_market_caps(STOCK_MAP) 
 
@@ -265,7 +275,6 @@ if st.session_state.page_mode == "main":
             class_mode = "hts-limit" if s_info["type"] == "1" else "hts-down" if s_info["type"] == "5" or "-" in s_info["rate"] else "hts-up"
             sign = "▲ " if class_mode != "hts-down" else "▼ "
             
-            # [수정] 모바일 텍스트 정렬을 위해 '시(시가총액)' 및 '거래(거래대금)' 명시적 라벨 인라인 배치
             cols[idx % 4].markdown(f"<a class='notranslate' href='?stock={sname}' target='_self' style='text-decoration:none; color:inherit;'><div class='hts-card {class_mode}'><div class='hts-row' style='display:flex; justify-content:space-between;'><span class='stock-title' style='color:#ffffff; font-weight:bold; overflow:hidden; white-space:nowrap; text-overflow:ellipsis;'>{sname}</span><span class='status-color' style='font-weight:bold; margin-left:4px;'>{sign}{s_info['rate']}</span></div><div class='hts-sub-row' style='display:flex; justify-content:space-between; margin-top:4px;'><span class='status-color'>{s_info['price']}원</span><div style='text-align:right; font-size:10px;'><span style='color:#94a3b8;'>시 {s_info['mcap']}</span> <span style='color:#cbd5e1;'>| 거래 {s_info['volume']}</span></div></div></div></a>", unsafe_allow_html=True) 
 
 elif st.session_state.page_mode == "detail":
