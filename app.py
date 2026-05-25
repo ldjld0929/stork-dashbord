@@ -128,11 +128,14 @@ def fetch_market_caps(stock_map):
 
 MCAP_DATA = fetch_market_caps(STOCK_MAP)
 
+# ★★★ 여기서부터 거래대금 완벽 일치 수정 부분 ★★★
 @st.cache_data(ttl=5)
 def fetch_hts_api_prices(stock_map):
     if not stock_map: return {}
     codes = list(stock_map.values())
     prices = {}
+    
+    # 1. 1차 세팅: 기존 API로 현재가/등락률 빠르게 세팅
     chunk_size = 20
     for i in range(0, len(codes), chunk_size):
         chunk = codes[i:i+chunk_size]
@@ -152,23 +155,47 @@ def fetch_hts_api_prices(stock_map):
                         cv = item.get("cv", 0)
                         aq = item.get("aq", 0)
                         
-                        # =========================================================
-                        # ★★★ 거래대금 완벽 수정 (오류 원인: 나누기 수치를 1억으로 교체) ★★★
-                        aa = item.get("aa", 0) 
+                        # API 오류를 대비한 예비(Fallback) 거래대금 계산
+                        fallback_vol = f"{int(aq * close / 100000000):,}억" if aq else "0억"
+                        
                         if close > 0:
-                            if aa > 0:
-                                # 네이버 API의 aa는 '1원' 단위이므로 정확히 1억(100,000,000)으로 나누어야 합니다.
-                                vol_str = f"{int(aa) // 100000000:,}억"
-                            else:
-                                vol_str = f"{int(aq * close / 100000000):,}억" if aq else "0억"
-                                
                             prices[name] = {
-                                "price": f"{close:,}", "rate": f"{'+' if chg_type in ['1','2'] else '-' if chg_type in ['5'] else ''}{rate:.2f}%",
-                                "type": chg_type, "diff": f"{cv:,}", "volume": vol_str
+                                "price": f"{close:,}", 
+                                "rate": f"{'+' if chg_type in ['1','2'] else '-' if chg_type in ['5'] else ''}{rate:.2f}%",
+                                "type": chg_type, 
+                                "diff": f"{cv:,}", 
+                                "volume": fallback_vol # 일단 예비값 부여
                             }
-                        # =========================================================
         except: pass
+
+    # 2. 2차 세팅: [틀린 API 버리고 네이버 화면 텍스트 100% 똑같이 긁어오기]
+    def fetch_exact_volume(name, code):
+        try:
+            url = f"https://finance.naver.com/item/sise.naver?code={code}"
+            res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=2)
+            soup = BeautifulSoup(res.text, 'html.parser')
+            # '거래대금'이 적혀있는 줄을 찾아 네이버 PC 화면의 544,040백만 글자를 그대로 가져옴
+            th = soup.find('th', string=lambda text: text and '거래대금' in text)
+            if th:
+                td = th.find_next_sibling('td')
+                if td:
+                    val = td.text.replace(',', '').replace('백만', '').replace(' ', '').replace('\n', '').strip()
+                    if val.isdigit():
+                        return name, f"{int(val) // 100:,}억"
+        except:
+            pass
+        return name, None
+
+    # 실시간 속도를 위해 15개 쓰레드로 동시에 화면 정보 수집하여 덮어쓰기
+    with concurrent.futures.ThreadPoolExecutor(max_workers=15) as executor:
+        future_to_stock = {executor.submit(fetch_exact_volume, name, code): name for name, code in stock_map.items()}
+        for future in concurrent.futures.as_completed(future_to_stock):
+            name, vol_str = future.result()
+            if name in prices and vol_str:
+                prices[name]["volume"] = vol_str
+
     return prices
+# ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
 
 realtime_data = fetch_hts_api_prices(STOCK_MAP)
 
