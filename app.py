@@ -12,32 +12,32 @@ st.set_page_config(page_title="NXT 자동형 주도주 전광판", layout="wide"
 # [모바일 가독성, 강제 번역 차단, 배경색 강제 고정 및 CSS 텍스트 노출 방지]
 st.markdown("""
 <head>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="google" content="notranslate">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="google" content="notranslate">
 </head>
 <style>
-    body, .stMarkdown, .stText, .stExpander, .stSelectbox, h4 { color: #ffffff !important; }
-    [data-testid="stHeader"] {background: #0f141c !important;}
-    body, .stApp, [data-testid="stAppViewContainer"], .main { background-color: #0f141c !important; }
-    .theme-box { background-color: #17202e; border: 1px solid #233249; border-radius: 6px; padding: 10px; margin-bottom: 8px; margin-top: 15px; }
-    .theme-top { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; }
-    .theme-lbl { background-color: #1e3a5f; color: #38bdf8 !important; font-size: 13px; font-weight: bold; padding: 2px 10px; border-radius: 4px; }
-    .theme-amt { color: #f43f5e !important; font-size: 13px; font-weight: bold; }
-    .theme-desc { color: #94a3b8 !important; font-size: 11px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } 
+body, .stMarkdown, .stText, .stExpander, .stSelectbox, h4 { color: #ffffff !important; }
+[data-testid="stHeader"] {background: #0f141c !important;}
+body, .stApp, [data-testid="stAppViewContainer"], .main { background-color: #0f141c !important; }
+.theme-box { background-color: #17202e; border: 1px solid #233249; border-radius: 6px; padding: 10px; margin-bottom: 8px; margin-top: 15px; }
+.theme-top { display: flex; justify-content: space-between; align-items: center; padding: 4px 0; }
+.theme-lbl { background-color: #1e3a5f; color: #38bdf8 !important; font-size: 13px; font-weight: bold; padding: 2px 10px; border-radius: 4px; }
+.theme-amt { color: #f43f5e !important; font-size: 13px; font-weight: bold; }
+.theme-desc { color: #94a3b8 !important; font-size: 11px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } 
 
-    /* 모바일 화면에서 글씨 뚫고 나가는 현상 방지 (고정높이 제거 및 유연한 여백 적용) */
-    .hts-card { background-color: #1b2636; border: 1px solid #283954; border-radius: 4px; padding: 10px 12px; margin-bottom: 8px; min-height: 66px; height: auto; display: flex; flex-direction: column; justify-content: center; cursor: pointer; }
-    .hts-card:hover { border: 1px solid #38bdf8; background-color: #223147; }
-    .hts-up .status-color { color: #ef4444 !important; }
-    .hts-down .status-color { color: #3b82f6 !important; }
-    .hts-limit { background-color: #eab308 !important; border: 1px solid #facc15 !important; }
-    .hts-limit .stock-title { color: #000000 !important; }
-    .hts-limit .status-color { color: #d32f2f !important; font-weight: 900; }
-    .hts-limit .hts-sub-row { color: #334155 !important; }
-    .detail-card { background-color: #17202e; border: 1px solid #283954; padding: 14px; border-radius: 8px; margin-bottom: 15px; }
-    .stExpander { background-color: #1b2636 !important; border: 1px solid #283954 !important; margin-bottom: 6px !important; border-radius: 4px !important; }
-    .rank-card { background-color: #1e293b; border-left: 3px solid #38bdf8; padding: 8px 12px; border-radius: 4px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
-    .rank-num { color: #38bdf8; font-weight: bold; margin-right: 10px; }
+/* 모바일 화면에서 글씨 뚫고 나가는 현상 방지 (고정높이 제거 및 유연한 여백 적용) */
+.hts-card { background-color: #1b2636; border: 1px solid #283954; border-radius: 4px; padding: 10px 12px; margin-bottom: 8px; min-height: 66px; height: auto; display: flex; flex-direction: column; justify-content: center; cursor: pointer; }
+.hts-card:hover { border: 1px solid #38bdf8; background-color: #223147; }
+.hts-up .status-color { color: #ef4444 !important; }
+.hts-down .status-color { color: #3b82f6 !important; }
+.hts-limit { background-color: #eab308 !important; border: 1px solid #facc15 !important; }
+.hts-limit .stock-title { color: #000000 !important; }
+.hts-limit .status-color { color: #d32f2f !important; font-weight: 900; }
+.hts-limit .hts-sub-row { color: #334155 !important; }
+.detail-card { background-color: #17202e; border: 1px solid #283954; padding: 14px; border-radius: 8px; margin-bottom: 15px; }
+.stExpander { background-color: #1b2636 !important; border: 1px solid #283954 !important; margin-bottom: 6px !important; border-radius: 4px !important; }
+.rank-card { background-color: #1e293b; border-left: 3px solid #38bdf8; padding: 8px 12px; border-radius: 4px; margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center; }
+.rank-num { color: #38bdf8; font-weight: bold; margin-right: 10px; }
 </style>
 """, unsafe_allow_html=True) 
 
@@ -92,7 +92,6 @@ def fetch_dynamic_themes():
 
 theme_data, STOCK_MAP = fetch_dynamic_themes() 
 
-# --- [수정] 대형주 '조' 단위 에러 완벽 해결 ---
 @st.cache_data(ttl=3600)
 def fetch_market_caps(stock_map):
     caps = {}
@@ -106,10 +105,7 @@ def fetch_market_caps(stock_map):
 
             m_sum_tag = soup.select_one("#_market_sum")
             if m_sum_tag:
-                # 1. 네이버가 보여주는 텍스트를 그대로 가져오고, 쓸데없는 띄어쓰기를 정리합니다.
                 val_str = " ".join(m_sum_tag.text.strip().split()) 
-
-                # 2. 강제 숫자 변환을 없애고, 뒤에 '억'만 붙여서 바로 보여줍니다.
                 if val_str.endswith("조"):
                     cap_str = val_str
                 else:
@@ -127,7 +123,6 @@ def fetch_market_caps(stock_map):
             caps[name] = cap_str 
 
     return caps
-# ----------------------------------------------------- 
 
 MCAP_DATA = fetch_market_caps(STOCK_MAP) 
 
@@ -154,24 +149,39 @@ def fetch_hts_api_prices(stock_map):
                         rate = item.get("cr", 0.0)
                         cv = item.get("cv", 0)
                         
-                        # ✨ [거래대금 로직 완벽 수정 부분] ✨
-                        aq = item.get("aq", 0) # 누적 거래량
-                        aa = item.get("aa", 0) # API 제공 실제 누적 거래대금 (백만원 단위)
+                        aq = item.get("aq", 0)
+                        aa = item.get("aa")
                         
-                        if close > 0:
-                            # 네이버 API의 'aa'는 백만원 단위이므로 100으로 나누어 '억원'으로 정확히 환산
-                            # 혹시 모를 누락 상황을 대비해 기존 방식(현재가*거래량)도 fallback 로직으로 안전하게 유지
-                            if aa > 0:
-                                vol_eok = int(aa // 100)
-                            else:
-                                vol_eok = int(aq * close // 100000000)
-                                
+                        # ✨ 거래대금 무한로딩 에러 완벽 방어 처리 ✨
+                        vol_str = "0억"
+                        try:
+                            # 1순위: 네이버가 실제 누적 거래대금(aa)을 정상적으로 보내주면 사용
+                            if aa is not None and str(aa).strip() != "":
+                                vol_str = f"{int(float(aa) // 100):,}억"
+                            # 2순위: 네이버가 aa 값을 빈칸으로 던지면, 예전 방식(현재가*거래량)으로 계산하여 멈춤 방지
+                            elif aq and close:
+                                vol_str = f"{int(float(aq) * float(close) // 100000000):,}억"
+                        except:
+                            # 최후의 방어망: 위 계산 중 어떤 알 수 없는 오류가 발생해도 무조건 우회하여 절대 멈추지 않음
+                            try:
+                                if aq and close:
+                                    vol_str = f"{int(float(aq) * float(close) // 100000000):,}억"
+                            except:
+                                vol_str = "0억"
+
+                        # 현재가, 등락률 등 다른 수치들도 문자가 섞여 들어오면 멈출 수 있으므로 2차 방어
+                        try:
+                            close_val = float(close) if close else 0.0
+                        except:
+                            close_val = 0.0
+
+                        if close_val > 0:
                             prices[name] = {
-                                "price": f"{close:,}", 
-                                "rate": f"{'+' if chg_type in ['1','2'] else '-' if chg_type in ['5'] else ''}{rate:.2f}%",
-                                "type": chg_type, 
-                                "diff": f"{cv:,}", 
-                                "volume": f"{vol_eok:,}억" if vol_eok > 0 else "0억"
+                                "price": f"{int(close_val):,}", 
+                                "rate": f"{'+' if str(chg_type) in ['1','2'] else '-' if str(chg_type) in ['5'] else ''}{float(rate):.2f}%" if rate else "0.00%",
+                                "type": str(chg_type), 
+                                "diff": f"{int(float(cv)):,}" if cv else "0", 
+                                "volume": vol_str
                             }
         except: pass
     return prices 
