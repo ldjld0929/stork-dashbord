@@ -24,8 +24,6 @@ body, .stApp, [data-testid="stAppViewContainer"], .main { background-color: #0f1
 .theme-lbl { background-color: #1e3a5f; color: #38bdf8 !important; font-size: 13px; font-weight: bold; padding: 2px 10px; border-radius: 4px; }
 .theme-amt { color: #f43f5e !important; font-size: 13px; font-weight: bold; }
 .theme-desc { color: #94a3b8 !important; font-size: 11px; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-/* 모바일 화면에서 글씨 뚫고 나가는 현상 방지 (고정높이 제거 및 유연한 여백 적용) */
 .hts-card { background-color: #1b2636; border: 1px solid #283954; border-radius: 4px; padding: 10px 12px; margin-bottom: 8px; min-height: 66px; height: auto; display: flex; flex-direction: column; justify-content: center; cursor: pointer; }
 .hts-card:hover { border: 1px solid #38bdf8; background-color: #223147; }
 .hts-up .status-color { color: #ef4444 !important; }
@@ -126,6 +124,19 @@ def fetch_market_caps(stock_map):
 
 MCAP_DATA = fetch_market_caps(STOCK_MAP) 
 
+# --- [신규 추가] 숫자를 억/조 단위로 예쁘게 바꿔주는 전용 포맷팅 함수 ---
+def format_money(val_in_eok):
+    if val_in_eok >= 10000:
+        jo = val_in_eok // 10000
+        eok = val_in_eok % 10000
+        if eok > 0:
+            return f"{jo:,}조 {eok:,}억"
+        else:
+            return f"{jo:,}조"
+    else:
+        return f"{val_in_eok:,}억"
+# -------------------------------------------------------------
+
 @st.cache_data(ttl=5)
 def fetch_hts_api_prices(stock_map):
     if not stock_map: return {}
@@ -144,25 +155,19 @@ def fetch_hts_api_prices(stock_map):
                     name = [k for k, v in stock_map.items() if v == code]
                     if name:
                         name = name[0]
-                        close = item.get("nv", 0)       # 현재가
-                        chg_type = item.get("rf")       # 상승/하락 타입
-                        rate = item.get("cr", 0.0)      # 등락률
-                        cv = item.get("cv", 0)          # 전일대비 가격차
+                        close = item.get("nv", 0)       
+                        chg_type = item.get("rf")       
+                        rate = item.get("cr", 0.0)      
+                        cv = item.get("cv", 0)          
                         
-                        # --- [오류 수정] 네이버 공식 누적 거래대금(단위: 백만 원) 데이터인 'aa' 활용 ---
-                        # 기존처럼 (거래량 * 현재가) 곱셈을 하지 않고, 네이버가 주는 정확한 누적 거래대금을 씁니다.
-                        aa_val = item.get("aa", 0)      
+                        aa_val = item.get("aa", 0) # aa: 네이버 공식 누적 거래대금 (1원 단위)
                         
                         if close > 0:
-                            # aa 값은 '백만 원' 단위이므로 100을 나누면 '억 원' 단위가 됩니다.
-                            vol_raw = int(aa_val / 100) if aa_val else 0
+                            # [핵심 수정] 1원 단위인 거래대금을 정확히 1억(100,000,000)으로 나눔!
+                            vol_raw = int(aa_val / 100000000) if aa_val else 0
                             
-                            if vol_raw >= 10000:
-                                jo = vol_raw // 10000
-                                eok = vol_raw % 10000
-                                vol_str = f"{jo}조 {eok:,}억" if eok else f"{jo}조"
-                            else:
-                                vol_str = f"{vol_raw:,}억"
+                            # 신규 포맷팅 함수 적용
+                            vol_str = format_money(vol_raw)
                                 
                             prices[name] = {
                                 "price": f"{close:,}", 
@@ -233,12 +238,8 @@ for t_name, t_val in theme_data.items():
     valid_stocks = len(t_val["stocks"])
     avg_rate = sum_rate / valid_stocks if valid_stocks > 0 else 0.0 
 
-    if total_vol >= 10000:
-        jo = total_vol // 10000
-        eok = total_vol % 10000
-        t_money_str = f"{jo}조 {eok:,}억" if eok else f"{jo}조"
-    else:
-        t_money_str = f"{total_vol:,}억"
+    # 섹터 합산 금액에도 신규 포맷팅 함수 똑같이 적용!
+    t_money_str = format_money(total_vol)
 
     processed_themes[t_name] = {
         "money": t_money_str,
