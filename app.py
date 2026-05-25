@@ -153,17 +153,17 @@ def fetch_hts_api_prices(stock_map):
                     rate = item.get("cr", 0.0)
                     cv = item.get("cv", 0)
                     
-                    # 🔥 [핵심 수정 완료] 네이버 API의 aa는 이미 '백만 원' 단위입니다. (예: 544040)
+                    # 🔥 [오류 완전 수정] aa는 '원' 단위가 맞습니다.
                     aa = item.get("aa", 0) 
+                    aq = item.get("aq", 0)
                     
                     if close > 0:
                         if aa > 0:
-                            # 544040(백만)을 100으로 나누면 5440(억)이 됩니다. 오차 0% 완벽 일치.
-                            vol_str = f"{int(aa // 100):,}억"
+                            # 원 단위이므로 1억(100,000,000)으로 나눕니다.
+                            vol_str = f"{int(aa // 100000000):,}억"
                         else:
-                            # 만약 API가 터져서 aa를 안 주면 그때만 예외적으로 계산
-                            aq = item.get("aq", 0)
-                            vol_str = f"{int(aq * close / 100000000):,}억" if aq else "0억"
+                            # fallback: API에서 aa가 누락될 경우 (수량 * 현재가)
+                            vol_str = f"{int((aq * close) / 100000000):,}억" if aq else "0억"
 
                         prices[name] = {
                             "price": f"{close:,}", 
