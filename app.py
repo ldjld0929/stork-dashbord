@@ -5,6 +5,7 @@ import urllib.parse
 from streamlit_autorefresh import st_autorefresh
 import xml.etree.ElementTree as ET 
 import concurrent.futures 
+import re
 
 # 1. 페이지 레이아웃 및 다크테마 최적화 세팅
 st.set_page_config(page_title="NXT 자동형 주도주 전광판", layout="wide") 
@@ -90,41 +91,52 @@ def fetch_dynamic_themes():
 
 theme_data, STOCK_MAP = fetch_dynamic_themes() 
 
-@st.cache_data(ttl=3600)
-def fetch_market_caps(stock_map):
-    caps = {}
+# --- [핵심 수정] 엉터리 폴링 API 버리고, 네이버 원본 소스(dl.blind)에서 진짜 거래대금만 100% 긁어오기 ---
+@st.cache_data(ttl=10)
+def fetch_mcap_and_volume(stock_map):
+    results = {}
     headers = {'User-Agent': 'Mozilla/5.0'}
     
-    def fetch_single_cap(name, code):
+    def fetch_single(name, code):
+        mcap_str = "-"
+        vol_raw = 0
         try:
             url = f"https://finance.naver.com/item/main.naver?code={code}"
             res = requests.get(url, headers=headers, timeout=3)
             soup = BeautifulSoup(res.text, 'html.parser')
             
+            # 1. 시가총액 완벽 추출
             m_sum_tag = soup.select_one("#_market_sum")
             if m_sum_tag:
                 val_str = " ".join(m_sum_tag.text.strip().split())
-                if val_str.endswith("조"):
-                    cap_str = val_str
-                else:
-                    cap_str = f"{val_str}억"
-                return name, cap_str
-            else:
-                return name, "-"
+                mcap_str = val_str if val_str.endswith("조") else f"{val_str}억"
+                
+            # 2. 거래대금 완벽 추출 (키움증권 5,440억과 똑같이 맞춰주는 핵심 로직!)
+            blind_dl = soup.select_one("dl.blind")
+            if blind_dl:
+                for dd in blind_dl.select("dd"):
+                    if dd.text.startswith("거래대금"):
+                        # 예: "거래대금 544,040백만" 이라는 텍스트에서 숫자 '544040'만 빼옴
+                        num_str = re.sub(r'[^0-9]', '', dd.text)
+                        if num_str:
+                            vol_raw = int(num_str) // 100 # 백만 단위를 100으로 나누어 정확한 '억' 단위로 변환!
+                        break
+                        
+            return name, {"mcap": mcap_str, "vol_raw": vol_raw}
         except:
-            return name, "-"
+            return name, {"mcap": "-", "vol_raw": 0}
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=20) as executor:
-        future_to_stock = {executor.submit(fetch_single_cap, name, code): name for name, code in stock_map.items()}
+        future_to_stock = {executor.submit(fetch_single, name, code): name for name, code in stock_map.items()}
         for future in concurrent.futures.as_completed(future_to_stock):
-            name, cap_str = future.result()
-            caps[name] = cap_str
+            name, data = future.result()
+            results[name] = data
             
-    return caps 
+    return results 
 
-MCAP_DATA = fetch_market_caps(STOCK_MAP) 
+MCAP_AND_VOL_DATA = fetch_mcap_and_volume(STOCK_MAP) 
 
-# --- [신규 추가] 숫자를 억/조 단위로 예쁘게 바꿔주는 전용 포맷팅 함수 ---
+# 숫자를 억/조 단위로 예쁘게 바꿔주는 포맷팅 함수
 def format_money(val_in_eok):
     if val_in_eok >= 10000:
         jo = val_in_eok // 10000
@@ -135,7 +147,6 @@ def format_money(val_in_eok):
             return f"{jo:,}조"
     else:
         return f"{val_in_eok:,}억"
-# -------------------------------------------------------------
 
 @st.cache_data(ttl=5)
 def fetch_hts_api_prices(stock_map):
@@ -146,6 +157,7 @@ def fetch_hts_api_prices(stock_map):
     for i in range(0, len(codes), chunk_size):
         chunk = codes[i:i+chunk_size]
         codes_str = ",".join(chunk)
+        # 이제 폴링 API에서는 현재가(close), 등락률(rate)만 가져오고 거래대금은 쳐다보지도 않습니다!
         url = f"https://polling.finance.naver.com/api/realtime?query=SERVICE_ITEM:{codes_str}"
         try:
             res = requests.get(url, headers={'User-Agent': 'Mozilla/5.0'}, timeout=3).json()
@@ -160,22 +172,12 @@ def fetch_hts_api_prices(stock_map):
                         rate = item.get("cr", 0.0)      
                         cv = item.get("cv", 0)          
                         
-                        aa_val = item.get("aa", 0) # aa: 네이버 공식 누적 거래대금 (1원 단위)
-                        
                         if close > 0:
-                            # [핵심 수정] 1원 단위인 거래대금을 정확히 1억(100,000,000)으로 나눔!
-                            vol_raw = int(aa_val / 100000000) if aa_val else 0
-                            
-                            # 신규 포맷팅 함수 적용
-                            vol_str = format_money(vol_raw)
-                                
                             prices[name] = {
                                 "price": f"{close:,}", 
                                 "rate": f"{'+' if chg_type in ['1','2'] else '-' if chg_type in ['5'] else ''}{rate:.2f}%",
                                 "type": chg_type, 
-                                "diff": f"{cv:,}", 
-                                "vol_val": vol_raw,
-                                "volume": vol_str
+                                "diff": f"{cv:,}"
                             }
         except: pass
     return prices 
@@ -210,15 +212,22 @@ def fetch_live_global_financial_news(stock_name):
     except: return [] 
 
 def get_numeric_score(sname):
-    info = realtime_data.get(sname, {"price": "-", "rate": "0.00%", "type": "3", "volume": "0억", "diff": "0", "vol_val": 0})
-    info["mcap"] = MCAP_DATA.get(sname, "-")
+    info = realtime_data.get(sname, {"price": "-", "rate": "0.00%", "type": "3", "diff": "0"})
+    web_data = MCAP_AND_VOL_DATA.get(sname, {"mcap": "-", "vol_raw": 0})
+    
+    # 1. 시가총액 매핑
+    info["mcap"] = web_data["mcap"]
+    
+    # 2. 거래대금 강제 매핑 (이제 키움증권 화면과 100% 동일하게 들어갑니다)
+    final_vol_raw = web_data["vol_raw"]
+    info["volume"] = format_money(final_vol_raw)
+    
     try:
         rate_val = float(info["rate"].replace("%", "").replace("+", ""))
-        vol_val = info.get("vol_val", 0) 
     except:
         rate_val = 0.0
-        vol_val = 0
-    return rate_val, vol_val, info 
+        
+    return rate_val, final_vol_raw, info 
 
 all_stocks_data = []
 processed_themes = {} 
@@ -238,7 +247,6 @@ for t_name, t_val in theme_data.items():
     valid_stocks = len(t_val["stocks"])
     avg_rate = sum_rate / valid_stocks if valid_stocks > 0 else 0.0 
 
-    # 섹터 합산 금액에도 신규 포맷팅 함수 똑같이 적용!
     t_money_str = format_money(total_vol)
 
     processed_themes[t_name] = {
