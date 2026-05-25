@@ -92,7 +92,6 @@ def fetch_dynamic_themes():
 
 theme_data, STOCK_MAP = fetch_dynamic_themes() 
 
-# --- [수정] 대형주 '조' 단위 에러 완벽 해결 ---
 @st.cache_data(ttl=3600)
 def fetch_market_caps(stock_map):
     caps = {}
@@ -106,10 +105,7 @@ def fetch_market_caps(stock_map):
             
             m_sum_tag = soup.select_one("#_market_sum")
             if m_sum_tag:
-                # 1. 네이버가 보여주는 텍스트를 그대로 가져오고, 쓸데없는 띄어쓰기를 정리합니다.
                 val_str = " ".join(m_sum_tag.text.strip().split())
-                
-                # 2. 강제 숫자 변환을 없애고, 뒤에 '억'만 붙여서 바로 보여줍니다.
                 if val_str.endswith("조"):
                     cap_str = val_str
                 else:
@@ -127,7 +123,6 @@ def fetch_market_caps(stock_map):
             caps[name] = cap_str
             
     return caps 
-# -----------------------------------------------------
 
 MCAP_DATA = fetch_market_caps(STOCK_MAP) 
 
@@ -149,15 +144,33 @@ def fetch_hts_api_prices(stock_map):
                     name = [k for k, v in stock_map.items() if v == code]
                     if name:
                         name = name[0]
-                        close = item.get("nv", 0)
-                        chg_type = item.get("rf")
-                        rate = item.get("cr", 0.0)
-                        cv = item.get("cv", 0)
-                        aq = item.get("aq", 0)
+                        close = item.get("nv", 0)       # 현재가
+                        chg_type = item.get("rf")       # 상승/하락 타입
+                        rate = item.get("cr", 0.0)      # 등락률
+                        cv = item.get("cv", 0)          # 전일대비 가격차
+                        
+                        # --- [오류 수정] 네이버 공식 누적 거래대금(단위: 백만 원) 데이터인 'aa' 활용 ---
+                        # 기존처럼 (거래량 * 현재가) 곱셈을 하지 않고, 네이버가 주는 정확한 누적 거래대금을 씁니다.
+                        aa_val = item.get("aa", 0)      
+                        
                         if close > 0:
+                            # aa 값은 '백만 원' 단위이므로 100을 나누면 '억 원' 단위가 됩니다.
+                            vol_raw = int(aa_val / 100) if aa_val else 0
+                            
+                            if vol_raw >= 10000:
+                                jo = vol_raw // 10000
+                                eok = vol_raw % 10000
+                                vol_str = f"{jo}조 {eok:,}억" if eok else f"{jo}조"
+                            else:
+                                vol_str = f"{vol_raw:,}억"
+                                
                             prices[name] = {
-                                "price": f"{close:,}", "rate": f"{'+' if chg_type in ['1','2'] else '-' if chg_type in ['5'] else ''}{rate:.2f}%",
-                                "type": chg_type, "diff": f"{cv:,}", "volume": f"{int(aq * close / 100000000):,}억" if aq else "0억"
+                                "price": f"{close:,}", 
+                                "rate": f"{'+' if chg_type in ['1','2'] else '-' if chg_type in ['5'] else ''}{rate:.2f}%",
+                                "type": chg_type, 
+                                "diff": f"{cv:,}", 
+                                "vol_val": vol_raw,
+                                "volume": vol_str
                             }
         except: pass
     return prices 
@@ -192,11 +205,11 @@ def fetch_live_global_financial_news(stock_name):
     except: return [] 
 
 def get_numeric_score(sname):
-    info = realtime_data.get(sname, {"price": "-", "rate": "0.00%", "type": "3", "volume": "0억", "diff": "0"})
+    info = realtime_data.get(sname, {"price": "-", "rate": "0.00%", "type": "3", "volume": "0억", "diff": "0", "vol_val": 0})
     info["mcap"] = MCAP_DATA.get(sname, "-")
     try:
         rate_val = float(info["rate"].replace("%", "").replace("+", ""))
-        vol_val = int(info["volume"].replace("억", "").replace(",", ""))
+        vol_val = info.get("vol_val", 0) 
     except:
         rate_val = 0.0
         vol_val = 0
@@ -220,8 +233,15 @@ for t_name, t_val in theme_data.items():
     valid_stocks = len(t_val["stocks"])
     avg_rate = sum_rate / valid_stocks if valid_stocks > 0 else 0.0 
 
+    if total_vol >= 10000:
+        jo = total_vol // 10000
+        eok = total_vol % 10000
+        t_money_str = f"{jo}조 {eok:,}억" if eok else f"{jo}조"
+    else:
+        t_money_str = f"{total_vol:,}억"
+
     processed_themes[t_name] = {
-        "money": f"{total_vol:,}억",
+        "money": t_money_str,
         "news": t_val["news"],
         "stocks_data": stock_list_with_score,
         "total_vol": total_vol,
